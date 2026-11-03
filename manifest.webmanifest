@@ -1,0 +1,45 @@
+{
+  "id": "./",
+  "name": "Macrolens — Macro Tracker",
+  "short_name": "Macrolens",
+  "description": "Track calories and macros with barcode scanning, Open Food Facts + USDA search and private on-device AI meal photo estimates.",
+  "lang": "en",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait",
+  "background_color": "#0c0d12",
+  "theme_color": "#0c0d12",
+  "categories": ["health", "fitness", "food", "lifestyle"],
+  "prefer_related_applications": false,
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Scan barcode",
+      "short_name": "Scan",
+      "description": "Scan a product barcode",
+      "url": "./#/add/scan",
+      "icons": [{ "src": "icons/shortcut-scan.png", "sizes": "96x96", "type": "image/png" }]
+    },
+    {
+      "name": "Snap meal (AI)",
+      "short_name": "Snap",
+      "description": "Estimate macros from a photo",
+      "url": "./#/add/snap",
+      "icons": [{ "src": "icons/shortcut-snap.png", "sizes": "96x96", "type": "image/png" }]
+    },
+    {
+      "name": "Food diary",
+      "short_name": "Diary",
+      "url": "./#/diary",
+      "icons": [{ "src": "icons/shortcut-diary.png", "sizes": "96x96", "type": "image/png" }]
+    }
+  ]
+}

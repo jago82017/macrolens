@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Build AI embeddings</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { max-width: 640px; margin: 40px auto; padding: 0 16px; line-height: 1.5; }
+    button { font: inherit; padding: 10px 18px; border-radius: 10px; border: 0; background: #7b6cff; color: #fff; cursor: pointer; }
+    button:disabled { opacity: .5; }
+    progress { width: 100%; height: 14px; }
+    code { background: rgba(127,127,127,.15); padding: 1px 5px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Build precomputed AI text embeddings</h1>
+  <p>Run this after editing <code>js/fooddb.js</code> or the prompt tables in <code>js/ai.js</code>. It encodes every built-in prompt with the same MobileCLIP-S0 text tower the app uses, then downloads <code>mcs0-text-v1.json</code> and <code>mcs0-text-v1.bin</code>. Put both in <code>/models/</code> and bump <code>VERSION</code> in <code>sw.js</code>.</p>
+  <p>Serve the project over http(s) (not <code>file://</code>). Expect several minutes: the text tower is single-threaded WASM.</p>
+  <button id="go">Build embeddings</button>
+  <p id="msg"></p>
+  <progress id="bar" value="0" max="1" hidden></progress>
+  <script type="module">
+    import { AutoTokenizer, CLIPTextModelWithProjection } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1';
+    import { BUILTIN_FOODS } from '../js/fooddb.js';
+    import { promptSets, EMB_NS, MODEL_ID } from '../js/ai.js';
+
+    const msg = document.getElementById('msg');
+    const bar = document.getElementById('bar');
+    const download = (data, name, type) => {
+      const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([data], { type })), download: name });
+      a.click();
+    };
+
+    document.getElementById('go').onclick = async e => {
+      e.target.disabled = true;
+      bar.hidden = false;
+      const prompts = [...new Set(BUILTIN_FOODS.flatMap(f => Object.values(promptSets(f)).flat()))];
+      msg.textContent = `Loading text model… (${prompts.length} prompts to encode)`;
+      const tok = await AutoTokenizer.from_pretrained(MODEL_ID);
+      const model = await CLIPTextModelWithProjection.from_pretrained(MODEL_ID, { dtype: 'q8', device: 'wasm' });
+      const d = 512, stride = 4 + d;
+      const buf = new ArrayBuffer(prompts.length * stride);
+      const view = new DataView(buf);
+      for (let b = 0; b < prompts.length; b += 24) {
+        const batch = prompts.slice(b, b + 24);
+        const { text_embeds } = await model(tok(batch, { padding: 'max_length', truncation: true }));
+        const n = text_embeds.normalize(2, -1);
+        batch.forEach((_, j) => {
+          const i = b + j;
+          const v = n.data.subarray(j * d, (j + 1) * d);
+          let m = 0;
+          for (const x of v) m = Math.max(m, Math.abs(x));
+          const s = m / 127 || 1;
+          view.setFloat32(i * stride, s, true);
+          const q = new Int8Array(buf, i * stride + 4, d);
+          for (let k = 0; k < d; k++) q[k] = Math.round(v[k] / s);
+        });
+        bar.value = (b + batch.length) / prompts.length;
+        msg.textContent = `Encoded ${b + batch.length} / ${prompts.length}`;
+        await new Promise(r => setTimeout(r)); // let the progress bar paint
+      }
+      const meta = { ns: EMB_NS, model: MODEL_ID, dtype: 'q8', dims: d, quant: 'int8-per-vector', count: prompts.length, keys: prompts };
+      download(JSON.stringify(meta), 'mcs0-text-v1.json', 'application/json');
+      download(buf, 'mcs0-text-v1.bin', 'application/octet-stream');
+      msg.textContent = 'Done — move both files into /models/.';
+    };
+  </script>
+</body>
+</html>
