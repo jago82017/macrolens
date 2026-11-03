@@ -26,6 +26,7 @@ export const DEFAULT_SETTINGS = {
   usdaKey: '',
   celebrations: true,
   haptics: true,
+  grades: true, // show A–F diet-fit badges in food lists and the diary
   onboarded: false,
 };
 
@@ -117,8 +118,16 @@ export async function deleteFood(id) {
   emit('foods', { id, deleted: true });
 }
 
+// Grade-data fields from a fresher copy of a food (e.g. a new search result) fill gaps in the stored one.
+const GRADE_FIELDS = ['additives', 'additivesKnown', 'nova', 'nutriscore', 'group1', 'group2', 'ingredients', 'usdaCategory'];
+function refreshFields(stored, food) {
+  for (const k of GRADE_FIELDS) if (stored[k] == null && food[k] != null) stored[k] = food[k];
+  return stored;
+}
+
 export async function touchFood(food) {
-  const stored = (await db.get('foods', food.id)) || { ...food, createdAt: Date.now() };
+  const prev = await db.get('foods', food.id);
+  const stored = prev ? refreshFields(prev, food) : { ...food, createdAt: Date.now() };
   stored.lastUsed = Date.now();
   stored.uses = (stored.uses || 0) + 1;
   if (!stored.barcode) delete stored.barcode;
@@ -127,7 +136,8 @@ export async function touchFood(food) {
 }
 
 export async function toggleFavorite(food) {
-  const stored = (await db.get('foods', food.id)) || { ...food, createdAt: Date.now() };
+  const prev = await db.get('foods', food.id);
+  const stored = prev ? refreshFields(prev, food) : { ...food, createdAt: Date.now() };
   stored.favorite = !stored.favorite;
   if (!stored.barcode) delete stored.barcode;
   await db.put('foods', stored);

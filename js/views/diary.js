@@ -1,6 +1,6 @@
 // Diary: day navigation strip, per-meal entries, copy-from-yesterday, day summary.
 
-import { getSettings, getEntries, getEntriesRange, addEntries, deleteEntry, addEntry } from '../store.js';
+import { getSettings, getEntries, getEntriesRange, addEntries, deleteEntry, addEntry, allFoods } from '../store.js';
 import { sum } from '../nutrition.js';
 import { pbar, animate, toast } from '../ui.js';
 import { icon } from '../icons.js';
@@ -8,6 +8,7 @@ import { esc, fmt, todayKey, addDays, startOfWeek, parseKey, relDay, isKey, MEAL
 import { openAddFood } from '../sheets/addfood.js';
 import { openFoodDetail, foodFromEntry, thumb, badge } from '../sheets/food.js';
 import { checkGoals } from '../celebrate.js';
+import { gradeFood, gradeBadge, withGradeData, averageGrade } from '../grade.js';
 
 let suppressClickUntil = 0; // swallow the click that follows a long-press delete
 
@@ -16,11 +17,17 @@ export async function render(el, [dateParam]) {
   const tg = getSettings().targets;
   const wk = startOfWeek(date);
   const weekDays = Array.from({ length: 7 }, (_, i) => addDays(wk, i));
-  const [entries, weekEntries, prevEntries] = await Promise.all([
+  const settings = getSettings();
+  const [entries, weekEntries, prevEntries, foods] = await Promise.all([
     getEntries(date),
     getEntriesRange(weekDays[0], weekDays[6]),
     getEntries(addDays(date, -1)),
+    settings.grades === false ? [] : allFoods(),
   ]);
+  // Diet-fit grade per entry: the entry's own nutrition plus additives/NOVA from the stored food.
+  const foodById = new Map(foods.map(f => [f.id, f]));
+  const grades = new Map(settings.grades === false ? [] : entries.map(e => [e.id, gradeFood(withGradeData(foodFromEntry(e), foodById.get(e.foodId)), settings)]));
+  const dayGrade = averageGrade(entries.map(e => ({ grade: grades.get(e.id), kcal: e.kcal })));
   const logged = new Set(weekEntries.map(e => e.date));
   const t = sum(entries);
   const today = todayKey();
@@ -58,6 +65,7 @@ export async function render(el, [dateParam]) {
         ${[['protein', 'Protein'], ['carbs', 'Carbs'], ['fat', 'Fat']].map(([k, n]) => `
           <div><div class="row between small"><span style="color:var(--${k})">${n}</span><span class="muted">${fmt(t[k])}/${tg[k]}g</span></div>${pbar(t[k], tg[k], `var(--${k})`)}</div>`).join('')}
       </div>
+      ${dayGrade ? `<div class="ds-grade">${gradeBadge(dayGrade)}<div><b>Food quality: ${esc(dayGrade.verdict.replace(/ for your diet$/, ''))}</b><small class="muted">Calorie-weighted average of ${date === today ? 'today\'s' : 'this day\'s'} foods · ${dayGrade.score}/100</small></div></div>` : ''}
     </section>
 
     ${MEALS.map(m => {
@@ -78,6 +86,7 @@ export async function render(el, [dateParam]) {
               <div class="li-title">${esc(e.name)}</div>
               <div class="li-sub">${e.source === 'ai' || e.source === 'quick' ? badge(e.source) + ' ' : ''}${esc(amountText(e))} · ${macroLine(e)}</div>
             </div>
+            ${grades.get(e.id) ? `<div class="li-grade">${gradeBadge(grades.get(e.id))}</div>` : ''}
             <div class="li-end"><b>${fmt(e.kcal)}</b><small>kcal</small></div>
           </li>`).join('')}</ul>`
           : prev.length ? `<button class="copy-prev" data-copy="${m.id}">${icon('copy', 16)} Copy ${prev.length} item${prev.length > 1 ? 's' : ''} from yesterday</button>` : ''}

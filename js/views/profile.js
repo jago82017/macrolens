@@ -10,8 +10,9 @@ import { calcForm } from '../sheets/calculator.js';
 import { openFoodEditor, foodRow } from '../sheets/food.js';
 import { prepareAI, isModelCached, memoryCount, clearMemory, aiState, MODEL_SIZE_MB } from '../ai.js';
 import { installState, promptInstall } from '../install.js';
+import { GRADES, TIERS, planLabel, tierDot } from '../grade.js';
 
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = '1.1.0';
 
 export async function render(el) {
   const s = getSettings();
@@ -57,6 +58,13 @@ export async function render(el) {
       </div>
       <label class="set-row"><span>Goal celebrations<small class="muted">Confetti when you hit a target</small></span><input type="checkbox" class="switch" data-toggle="celebrations" ${s.celebrations ? 'checked' : ''}></label>
       <label class="set-row"><span>Haptic feedback</span><input type="checkbox" class="switch" data-toggle="haptics" ${s.haptics ? 'checked' : ''}></label>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h3>${icon('target', 18)} Food grades</h3><span class="grade-strip" aria-hidden="true">${GRADES.map(g => `<span class="grade grade-${g.letter.toLowerCase()} xs">${g.letter}</span>`).join('')}</span></div>
+      <p class="muted small">Every food gets an A–F diet-fit grade for <b>${esc(planLabel(s.profile.goal, s.profile.diet))}</b>. It weighs protein against your target, calorie density, fibre, sugar, saturated fat, salt, processing level and additives. Change your goal or diet style in the calculator above and grades update.</p>
+      <label class="set-row"><span>Show grades<small class="muted">Badges in food lists and the diary</small></span><input type="checkbox" class="switch" data-toggle="grades" ${s.grades !== false ? 'checked' : ''}></label>
+      <button class="set-row as-btn" data-act="grades-help"><span>How grades work<small class="muted">Scoring, caps and additive ratings</small></span>${icon('chevR', 18)}</button>
     </section>
 
     <section class="card">
@@ -128,6 +136,7 @@ export async function render(el) {
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (!act) return;
     if (act === 'targets') openTargetsSheet();
+    if (act === 'grades-help') openGradesHelp();
     if (act === 'foods') openFoodsManager();
     if (act === 'newfood') openFoodEditor(null);
     if (act === 'install') promptInstall();
@@ -218,4 +227,32 @@ async function openFoodsManager() {
     };
   };
   draw();
+}
+
+function openGradesHelp() {
+  const s = getSettings();
+  openSheet({
+    title: 'How food grades work',
+    html: `
+      <div class="help">
+        <p>Each food starts at <b>50</b>. Factors add or take away points, and the total sets the grade. Grades judge the food per 100 g, not the portion, and they're personalised to <b>${esc(planLabel(s.profile.goal, s.profile.diet))}</b>.</p>
+        <ul class="help-grades">${GRADES.map(g => `<li><span class="grade grade-${g.letter.toLowerCase()}">${g.letter}</span><span><b>${g.min}+</b> · ${esc(g.verdict)}</span></li>`).join('')}</ul>
+        <h4>What's scored</h4>
+        <ul class="help-list">
+          <li><b>Protein</b>: share of calories from protein vs your target. Counts more on a high-protein diet, a cut or a bulk.</li>
+          <li><b>Calorie density</b>: low-calorie, filling foods score well on a cut; dense foods with good protein help a bulk. Sugary drinks lose points as liquid calories.</li>
+          <li><b>Fibre, sugar, saturated fat and salt</b>: UK traffic-light thresholds. Natural sugar in whole fruit, veg and plain dairy isn't penalised; juice is.</li>
+          <li><b>Diet style</b>: net carbs for keto, carb share for low-carb, starchy fuel for endurance.</li>
+          <li><b>Processing</b>: NOVA group from Open Food Facts, estimated from ingredients, or typical for generic foods.</li>
+          <li><b>Additives</b>: each rated by concern, using regulator decisions (UK FSA, EFSA, US FDA, IARC) and major studies.</li>
+          <li><b>Extras</b>: oily fish scores up; processed meat, alcohol, trans fats and deep-frying score down.</li>
+        </ul>
+        <h4>Caps</h4>
+        <p>Ultra-processed food can't get an A. A high-concern additive or processed meat caps a food at C. Alcohol, trans fats or several high-concern additives cap it at D.</p>
+        <h4>Additive ratings</h4>
+        <ul class="help-tiers">${TIERS.map((t, i) => `<li>${tierDot(i)}<b>${t.label}</b></li>`).join('')}</ul>
+        <p class="muted small">Barcode-scanned products use their real label. Generic foods use typical values, so scan the actual product for an exact grade. Paste the ingredients into a custom food to check its additives too.</p>
+        <p class="muted small">Grades are a guide to help you choose, not medical advice.</p>
+      </div>`,
+  });
 }

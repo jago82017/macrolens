@@ -2,7 +2,7 @@
 // (Transformers.js, ONNX Runtime WASM, ZXing, fonts) and a bounded product-image cache.
 // AI model weights are cached by Transformers.js itself in the 'transformers-cache' bucket.
 
-const VERSION = 'v1.0.0';
+const VERSION = 'v1.1.0';
 const SHELL_CACHE = `macrolens-shell-${VERSION}`;
 const RUNTIME_CACHE = 'macrolens-runtime-v1';
 const IMAGE_CACHE = 'macrolens-images-v1';
@@ -19,6 +19,8 @@ const SHELL = [
   './js/store.js',
   './js/nutrition.js',
   './js/fooddb.js',
+  './js/grade.js',
+  './js/grade-data.js',
   './js/icons.js',
   './js/ui.js',
   './js/celebrate.js',

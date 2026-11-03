@@ -13,6 +13,7 @@ An installable, offline-first calorie and macro tracker built to be hosted on **
 - **Search** covers your foods, ~175 built-in generic foods, Open Food Facts (branded) and USDA (Foundation / SR Legacy / FNDDS).
 - **Custom foods**: per-serving or per-100 g entry, a calorie-vs-macro sanity check, and an emoji picker.
 - **Snap AI**: a small on-device AI estimates macros from a photo (see below).
+- **A–F food grades**: every food gets a diet-fit grade personalised to your goal and diet style. It covers protein, calorie density, fibre, sugar, saturated fat, salt, processing (NOVA) and additives (see below).
 - **Celebrations**: confetti and a badge when you hit protein, calories (±5%), fiber or water, or get a "perfect macro day". Each fires once per goal per day, with haptics.
 - **Storage**: persistent IndexedDB (it calls `navigator.storage.persist()`), plus JSON export/import and full reset.
 - **PWA details**: a precached app shell, cache-first CDN/WASM assets, an update prompt, Android back-button support for sheets, manifest shortcuts (Scan / Snap / Diary), maskable icons, and dark/light themes.
@@ -32,6 +33,18 @@ The model is **MobileCLIP-S0** (Apple), run with **Transformers.js 3.8.1** / ONN
 Detected candidates show as chips. Tap one to add it to a mixed plate, or search the database to correct a guess (the correction is remembered).
 
 **Size and speed.** A photo only needs the **43 MB image tower**, which is downloaded once and cached for offline use. Text embeddings for all ~2,400 built-in prompts ship precomputed in `models/mcs0-text-v1.*` (1.3 MB, int8). The 43 MB text tower is fetched lazily, only for hints and custom foods, or when you tap *Profile → Download model now*. In testing it took about 3–7 s per photo on desktop, and phones will be slower.
+
+## How the food grades work
+
+Every food (search results, recents, scanned products, diary entries) shows an A–F badge. Tap a food to see the grade card and open **Why?** for every factor and its points. The diary also shows a calorie-weighted **food quality** grade for the day. Grades can be turned off in *Profile → Food grades*.
+
+- **Personalised.** Protein is judged against *your* protein target (its share of calories). Calorie density is rewarded on a cut and neutral on a bulk. Keto checks net carbs, low-carb checks carb share, and endurance rewards starchy fuel.
+- **Nutrition.** Fibre is rewarded. Sugar, saturated fat and salt use the UK FSA traffic-light thresholds (per 100 g, or per 100 ml for drinks). Natural sugar in whole fruit, veg and plain dairy isn't penalised; juice is.
+- **Processing.** The NOVA group comes from Open Food Facts, is estimated from the ingredients list, or uses a typical value for generic foods.
+- **Additives.** About 240 E-numbers are rated from *no known concern* to *high concern* in `js/grade-data.js`, each with a short note. Codes come from the Open Food Facts label or are parsed from ingredient text (E-numbers and names like "sucralose" or "sodium nitrite"). Custom foods have an optional ingredients box for this.
+- **Caps.** Ultra-processed food can't score an A. A high-concern additive or processed meat caps at C. Alcohol, trans fats or several high-concern additives cap at D.
+
+Products saved before grades existed are refreshed from Open Food Facts automatically when opened, or by tapping *Refresh product data*. Grades are a guide, not medical advice.
 
 ## Deploy to GitHub Pages and install on Android
 
@@ -93,6 +106,8 @@ js/db.js                IndexedDB wrapper + persistence
 js/store.js             Domain layer + event bus (entries, foods, days, weights, backup)
 js/nutrition.js         Scaling, totals, macro calculator
 js/fooddb.js            Built-in reference foods (also the AI vocabulary)
+js/grade.js             A–F diet-fit grading engine
+js/grade-data.js        Additive ratings, ingredient aliases, typical values for generic foods
 js/api.js               Open Food Facts + USDA clients and barcode lookup chain
 js/scanner.js           Camera barcode scanner
 js/ai.js                AI estimation pipeline (scoring, injection, memory)

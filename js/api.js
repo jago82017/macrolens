@@ -1,12 +1,13 @@
 // Online food databases: Open Food Facts (barcodes, branded products) and USDA FoodData Central
 // (generic foods + branded UPC fallback). All results are normalised to the app's food shape.
 
-import { getSettings, getFoodByBarcode, saveFood } from './store.js';
+import { getSettings, getFoodByBarcode, saveFood, getFood } from './store.js';
 import { kcalFromMacros } from './nutrition.js';
 
 const OFF = 'https://world.openfoodfacts.org';
 const USDA = 'https://api.nal.usda.gov/fdc/v1';
-const OFF_FIELDS = 'code,product_name,product_name_en,generic_name,brands,quantity,serving_size,serving_quantity,nutriments,image_front_small_url,image_front_thumb_url,image_small_url';
+const OFF_FIELDS = 'code,product_name,product_name_en,generic_name,brands,quantity,serving_size,serving_quantity,nutriments,image_front_small_url,image_front_thumb_url,image_small_url,' +
+  'additives_tags,additives_n,nova_group,nutriscore_grade,pnns_groups_1,pnns_groups_2,ingredients_text_en,ingredients_text'; // grade data
 
 const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : undefined; };
 const clean = o => Object.fromEntries(Object.entries(o).filter(([, v]) => v != null && Number.isFinite(v)).map(([k, v]) => [k, Math.round(v * 100) / 100]));
@@ -62,6 +63,9 @@ export function fromOFF(p) {
   if (per100.kcal == null) per100.kcal = kcalFromMacros(per100.protein || 0, per100.carbs || 0, per100.fat || 0);
 
   const brand = (Array.isArray(p.brands) ? p.brands[0] : String(p.brands || '').split(',')[0]) || '';
+  const ingredients = String(p.ingredients_text_en || p.ingredients_text || '').replace(/\s+/g, ' ').trim().slice(0, 1500);
+  const nova = parseInt(p.nova_group, 10);
+  const group = g => (g && g !== 'unknown' ? String(g) : undefined);
   return {
     id: `off:${p.code}`,
     source: 'off',
@@ -72,6 +76,14 @@ export function fromOFF(p) {
     quantity: p.quantity || '',
     per100: clean(per100),
     servings: sq > 0 ? [{ label: servingLabel(p.serving_size), grams: Math.round(sq * 10) / 10 }] : [],
+    // Grade data. additivesKnown tells "no additives" apart from "ingredients not analysed yet".
+    additives: (p.additives_tags || []).map(t => String(t).replace(/^[a-z]{2}:/, '').toLowerCase()),
+    additivesKnown: p.additives_n != null || !!ingredients,
+    nova: nova >= 1 && nova <= 4 ? nova : undefined,
+    nutriscore: /^[a-e]$/.test(p.nutriscore_grade || '') ? p.nutriscore_grade : undefined,
+    group1: group(p.pnns_groups_1),
+    group2: group(p.pnns_groups_2),
+    ingredients: ingredients || undefined,
   };
 }
 
@@ -149,6 +161,8 @@ export function fromUSDA(f) {
     name: prettyName(f.description),
     brand: prettyName(f.brandName || f.brandOwner || ''),
     usdaType: f.dataType,
+    usdaCategory: f.foodCategory || undefined,
+    ingredients: f.ingredients ? String(f.ingredients).slice(0, 1500) : undefined,
     per100: clean(per100),
     servings,
   };
@@ -174,6 +188,16 @@ async function lookupUSDA(code, signal) {
 export async function searchUSDA(q, signal) {
   const foods = await usdaFetch(`query=${encodeURIComponent(q)}&pageSize=25&dataType=${encodeURIComponent('Foundation,SR Legacy,Survey (FNDDS)')}`, signal);
   return foods.map(fromUSDA).filter(Boolean);
+}
+
+// Re-fetch a saved Open Food Facts product to pick up fields added after it was first saved
+// (additives, NOVA, ingredients). Keeps the user's own data: favourite, usage, custom servings.
+export async function refreshFood(food, signal) {
+  if (food?.source !== 'off' || !food.barcode) return null;
+  const fresh = await lookupOFF(food.barcode, signal);
+  if (!fresh) return null;
+  const stored = (await getFood(food.id)) || food;
+  return saveFood({ ...stored, ...fresh, id: stored.id, servings: stored.servings?.length ? stored.servings : fresh.servings });
 }
 
 // ---------- Barcode lookup chain: local cache → OFF → USDA ----------

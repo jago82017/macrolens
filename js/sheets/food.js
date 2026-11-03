@@ -7,6 +7,8 @@ import { scale, macroSplit, kcalFromMacros } from '../nutrition.js';
 import { addEntry, updateEntry, deleteEntry, touchFood, toggleFavorite, getFood, saveFood, getSettings } from '../store.js';
 import { categoryEmoji } from '../fooddb.js';
 import { checkGoals } from '../celebrate.js';
+import { gradeFood, gradeBadge, withGradeData, tierDot, TIERS } from '../grade.js';
+import { refreshFood } from '../api.js';
 
 export const SOURCE = {
   off: { label: 'Open Food Facts', short: 'OFF' },
@@ -44,12 +46,21 @@ export function servingSummary(food) {
   return { text: 'per 100 g', kcal: food.per100?.kcal || 0 };
 }
 
+// Small A–F badge for list rows (hidden when the user turns grades off in Profile).
+export function rowGrade(food) {
+  const settings = getSettings();
+  if (settings.grades === false) return '';
+  const g = gradeFood(food, settings);
+  return g ? `<div class="li-grade">${gradeBadge(g)}</div>` : '';
+}
+
 export function foodRow(food) {
   const s = servingSummary(food);
   const sub = [food.brand, s.text].filter(Boolean).map(esc).join(' · ');
   return `<button class="food-row" data-fid="${esc(food.id)}">
     <div class="li-thumb">${thumb(food)}</div>
     <div class="li-main"><div class="li-title">${esc(food.name)} ${food.favorite ? `<span class="fav-dot">${icon('star', 12)}</span>` : ''}</div><div class="li-sub">${badge(food.source)} ${sub}</div></div>
+    ${rowGrade(food)}
     <div class="li-end"><b>${fmt(s.kcal)}</b><small>kcal</small></div>
   </button>`;
 }
@@ -87,6 +98,8 @@ export function openFoodDetail(food, { date, meal, entry, onAdded, onClose } = {
       </div>
       ${food.source !== 'ai' && !String(food.id).startsWith('entry:') ? `<button class="btn-icon ghost fav ${favorite ? 'on' : ''}" data-fav aria-label="Favourite">${icon('star')}</button>` : ''}
     </div>
+
+    <div class="grade-host"></div>
 
     <div class="fd-energy">
       <div><span class="fd-kcal" data-o="kcal">0</span><span class="muted"> kcal</span></div>
@@ -210,6 +223,7 @@ export function openFoodDetail(food, { date, meal, entry, onAdded, onClose } = {
       checkGoals(theDate);
     }
   });
+  mountGradeCard(sheet.el.querySelector('.grade-host'), food);
   qtyInput.addEventListener('input', update);
   unitSel.addEventListener('change', () => {
     const before = grams();
@@ -220,6 +234,88 @@ export function openFoodDetail(food, { date, meal, entry, onAdded, onClose } = {
   });
   update();
   return sheet;
+}
+
+// ---------- Diet-fit grade card ----------
+// Shows the A–F grade, the main reasons, and a full breakdown (every factor, additives, ingredients).
+// Diary entries only snapshot nutrition, so the stored food is looked up to recover additives/NOVA.
+// Products saved before grading existed are refreshed from Open Food Facts in the background.
+async function mountGradeCard(host, food) {
+  if (!host || food.source === 'quick') return;
+  let current = withGradeData(food, null);
+  const draw = (state = {}) => {
+    const g = gradeFood(current, getSettings());
+    host.innerHTML = g ? gradeCard(g, current, state) : '';
+  };
+  draw();
+  const id = String(food.id || '');
+  if (!id.startsWith('builtin:') && !id.startsWith('entry:')) {
+    const stored = await getFood(id).catch(() => null);
+    if (stored) { current = withGradeData({ ...current }, stored); draw(); }
+  }
+  const canRefresh = () => current.source === 'off' && current.barcode;
+  const refresh = async () => {
+    draw({ loading: true });
+    try {
+      const fresh = await refreshFood(current);
+      if (fresh) current = withGradeData({ ...current, ...pickGrade(fresh) }, fresh);
+      draw(fresh ? {} : { error: 'Not found on Open Food Facts' });
+    } catch (e) {
+      draw({ error: navigator.onLine ? 'Couldn\'t reach Open Food Facts' : 'You\'re offline' });
+    }
+  };
+  host.addEventListener('click', e => { if (e.target.closest('[data-refresh]')) refresh(); });
+  if (canRefresh() && current.additives === undefined && navigator.onLine) refresh();
+}
+
+const GRADE_KEYS = ['additives', 'additivesKnown', 'nova', 'nutriscore', 'group1', 'group2', 'ingredients'];
+const pickGrade = f => Object.fromEntries(GRADE_KEYS.filter(k => f[k] !== undefined).map(k => [k, f[k]]));
+
+function gradeCard(g, food, { loading, error } = {}) {
+  const real = g.factors.filter(f => !f.ref);
+  const good = real.filter(f => f.pts >= 3).slice(0, 2);
+  const bad = real.filter(f => f.pts <= -3).slice(0, 3);
+  const chips = [...bad, ...good].sort((a, b) => Math.abs(b.pts) - Math.abs(a.pts))
+    .map(f => `<span class="gc-chip ${f.pts > 0 ? 'good' : 'bad'}">${icon(f.pts > 0 ? 'check' : 'x', 12)}${esc(f.title)}</span>`).join('');
+  const sign = n => (n > 0 ? `+${n}` : n === 0 ? '·' : `−${Math.abs(n)}`);
+  const factorList = real.map(f => `
+      <li class="gf ${f.pts > 0 ? 'good' : f.pts < 0 ? 'bad' : 'info'}">
+        <span class="gf-pts">${sign(f.pts)}</span>
+        <div><b>${esc(f.title)}</b><small>${esc(f.detail)}</small></div>
+      </li>`).join('');
+  const ref = g.factors.find(f => f.ref);
+  const additives = g.additives.length ? `
+      <h5 class="gc-h">Additives <span class="muted">(${g.additives.length})</span></h5>
+      <ul class="gc-adds">${g.additives.map(a => `
+        <li>${tierDot(a.tier)}<div><b>${esc(a.label)} ${esc(a.name)}</b> <span class="tier-label tier-${a.tier ?? 'x'}">${a.tier == null ? 'Unrated' : TIERS[a.tier].short}</span><small>${esc(a.note)}</small></div></li>`).join('')}
+      </ul>
+      <p class="muted tiny">${g.additivesFrom === 'ingredients' ? 'Found by reading the ingredients list.' : 'From the product label via Open Food Facts.'}</p>` : '';
+  const refreshBtn = food.source === 'off' && food.barcode
+    ? `<button class="btn soft sm block" data-refresh ${loading ? 'disabled' : ''}>${icon('refresh', 15)} ${loading ? 'Loading product data…' : 'Refresh product data'}</button>${error ? `<p class="warn-text tiny center">${esc(error)}</p>` : ''}`
+    : '';
+  return `
+    <section class="grade-card gc-${g.letter.toLowerCase()}">
+      <div class="gc-top">
+        ${gradeBadge(g, 'xl')}
+        <div class="gc-text">
+          <b>${esc(g.verdict)}</b>
+          <small>Diet fit ${g.score}/100 · ${esc(g.plan)}</small>
+        </div>
+        ${loading ? '<div class="spinner sm"></div>' : ''}
+      </div>
+      ${chips ? `<div class="gc-chips">${chips}</div>` : ''}
+      ${g.capped ? `<p class="gc-cap">${icon('info', 13)} Capped at ${g.capped.letter}: ${esc(g.capped.reason)}</p>` : ''}
+      <details class="gc-more">
+        <summary>Why ${g.letter}?</summary>
+        <ul class="gc-factors">${factorList}</ul>
+        ${additives}
+        ${food.ingredients ? `<h5 class="gc-h">Ingredients</h5><p class="gc-ingr">${esc(food.ingredients)}</p>` : ''}
+        ${ref ? `<p class="muted tiny">${esc(ref.title)}: ${esc(ref.detail)}</p>` : ''}
+        ${g.notes.map(t => `<p class="muted tiny">${esc(t)}</p>`).join('')}
+        ${refreshBtn}
+        <p class="muted tiny">Grades judge the food per 100 g against your goal and diet style in Profile, not the portion. They're a guide, not medical advice.</p>
+      </details>
+    </section>`;
 }
 
 // Quick-add entries have no food behind them, so they get a direct macro editor.
@@ -303,6 +399,10 @@ export function foodForm(container, { food, barcode = '', name = '', submitLabel
         ${NUTR_FIELDS.map(([k, l, u, req]) => `<div class="field"><label class="label ${['protein', 'carbs', 'fat'].includes(k) ? k + '-text' : ''}">${l}${req ? ' *' : ''} <span class="unit-hint">${u}</span></label><input class="input" name="${k}" type="number" inputmode="decimal" step="any" min="0" value="${valFor(k)}"></div>`).join('')}
       </div>
       <div class="kcal-check small"></div>
+      <div class="field">
+        <label class="label">Ingredients <span class="unit-hint">optional</span></label>
+        <textarea class="input textarea" name="ingredients" rows="3" maxlength="1500" placeholder="Paste from the label to check additives and processing, e.g. Wheat flour, sugar, palm oil, emulsifier (E471)…">${esc(food?.ingredients || '')}</textarea>
+      </div>
       <button class="btn primary block lg" type="submit">${esc(submitLabel)}</button>
     </form>`;
 
@@ -358,6 +458,7 @@ export function foodForm(container, { food, barcode = '', name = '', submitLabel
       emoji,
       per100,
       servings: sg > 0 ? [{ label: form.elements.servingLabel.value.trim() || 'serving', grams: sg }] : [],
+      ingredients: form.elements.ingredients.value.replace(/\s+/g, ' ').trim() || undefined,
     });
     haptic(15);
     onSave?.(saved);
