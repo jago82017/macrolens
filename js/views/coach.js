@@ -63,7 +63,7 @@ function itemHTML(it) {
     if (empty) return `<div class="msg bot hidden-msg" data-id="${it.id}"></div>`;
     return `<div class="msg bot ${it.streaming ? 'streaming' : ''}" data-id="${it.id}">
       ${it.thought ? `<details class="thought" ${it.streaming && !it.text ? 'open' : ''}><summary>${icon('bulb', 13)} ${it.streaming && !it.text ? 'Thinking…' : 'Reasoning'}</summary><div class="thought-body">${esc(it.thought).slice(-6000).replace(/\n/g, '<br>')}</div></details>` : ''}
-      ${it.text ? `<div class="bubble md">${md(it.text)}</div>` : it.streaming && !it.thought ? '<div class="bubble typing"><i></i><i></i><i></i></div>' : ''}
+      ${it.text ? `<div class="bubble md">${md(it.text)}</div>` : it.streaming && !it.thought ? `<div class="bubble typing"><i></i><i></i><i></i></div>${it.waiting ? `<small class="wait-note">${esc(modelInfo(it.model).label)} is queued at NVIDIA · ${it.waiting} s</small>` : ''}` : ''}
     </div>`;
   }
   if (it.role === 'tool') {

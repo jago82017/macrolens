@@ -14,7 +14,7 @@ import { GRADES, TIERS, planLabel, tierDot } from '../grade.js';
 import { MODELS, modelInfo, isConfigured, testConnection, listModels, resetQuirks } from '../cloud.js';
 import { openAISetupGuide } from '../sheets/aisetup.js';
 
-export const APP_VERSION = '1.2.1';
+export const APP_VERSION = '1.2.2';
 
 function modelOptions(current, visionOnly) {
   const list = MODELS.filter(m => !visionOnly || m.vision);

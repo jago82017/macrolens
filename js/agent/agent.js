@@ -38,7 +38,8 @@ async function systemPrompt(native) {
     '',
     'How to work:',
     "- Use tools to look things up instead of guessing. Never invent diary contents, ids or nutrition values a tool can give you.",
-    "- Logging food: search_foods with a short generic name (\"banana\", not \"medium banana\"), then pick the result that is the same food the user ate: start from best_match, prefer the user's own foods, then the plain generic food. Never swap in a processed variant (chips, dried, juice, powder) unless the user said so. Convert the amount to grams with the food's servings, then log_food. If nothing fits, quick_add a careful estimate and say it is an estimate.",
+    '- Everyday foods: call log_food_by_name directly (one call per food, all in the same turn) with grams or servings. It finds the match and logs in one step, so no separate search is needed.',
+    "- Branded or unusual foods: search_foods with a short generic name (\"banana\", not \"medium banana\"), then pick the result that is the same food the user ate: start from best_match, prefer the user's own foods, then the plain generic food. Never swap in a processed variant (chips, dried, juice, powder) unless the user said so. Convert the amount to grams with the food's servings, then log_food. If nothing fits, quick_add a careful estimate and say it is an estimate.",
     '- Sanity-check before logging: the food name must match what the user said, and the calories must be realistic (a banana is about 105 kcal, not 600).',
     '- Meal photos: call analyze_photo, then log the returned items with log_food using their food_id and grams (adjust grams if the user corrects you).',
     '- To edit or delete entries, call get_diary first to get entry_ids.',
@@ -263,7 +264,8 @@ export class Agent {
             messages: await this.buildMessages(native, info, model),
             tools: native ? toolSchemas() : undefined,
             signal: this.ctrl.signal,
-            onDelta: d => { live.text = d.content; live.thought = d.thought; this.emit('delta', live); },
+            onDelta: d => { live.text = d.content; live.thought = d.thought; live.waiting = 0; this.emit('delta', live); },
+            onWait: s => { if (s >= 4) { live.waiting = s; this.emit('delta', live); } },
           });
         } catch (e) {
           this.emit('remove', live);

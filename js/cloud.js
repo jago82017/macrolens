@@ -12,9 +12,9 @@ export const MODELS = [
   { id: 'nvidia/nemotron-3.5-super-vl-120b-a12b', label: 'Nemotron 3.5 Super VL', vendor: 'NVIDIA', vision: true, tools: true, reasoning: 'thinking', temperature: 0.6, top_p: 0.95, note: 'Best for photos · tools work · ~10 s per step' },
   // Its hosted endpoint drops image requests, so photos go to the vision model via analyze_photo.
   { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', label: 'Nemotron 3 Nano Omni', vendor: 'NVIDIA', vision: false, tools: true, reasoning: 'thinking', temperature: 0.6, top_p: 0.95, note: 'Fastest Coach (~1 s) · photos go to your photo model' },
-  { id: 'moonshotai/kimi-k3.1-pro', label: 'Kimi K3.1 Pro', vendor: 'Moonshot', vision: true, tools: true, reasoning: 'effort', temperature: 1.0, top_p: 0.95, note: 'Most capable, but often overloaded on the free tier' },
-  { id: 'z-ai/glm-5.3-flash', label: 'GLM-5.3 Flash', vendor: 'Z.ai', vision: true, tools: true, reasoning: 'effort', temperature: 0.7, top_p: 0.95, note: 'Vision + tools · can be slow on the free tier' },
-  { id: 'mistralai/mistral-large-4-1t-a52b', label: 'Mistral Large 4', vendor: 'Mistral', vision: true, tools: true, reasoning: 'effort3', temperature: 1.0, top_p: 0.95, note: 'Vision + tools · can be slow on the free tier' },
+  { id: 'moonshotai/kimi-k3.1-pro', label: 'Kimi K3.1 Pro', vendor: 'Moonshot', vision: true, tools: true, reasoning: 'effort', temperature: 1.0, top_p: 0.95, patience: 180000, note: 'Most capable · NVIDIA queues it, often 1–2 min per reply' },
+  { id: 'z-ai/glm-5.3-flash', label: 'GLM-5.3 Flash', vendor: 'Z.ai', vision: true, tools: true, reasoning: 'effort', temperature: 0.7, top_p: 0.95, patience: 120000, note: 'Vision + tools · can be slow on the free tier' },
+  { id: 'mistralai/mistral-large-4-1t-a52b', label: 'Mistral Large 4', vendor: 'Mistral', vision: true, tools: true, reasoning: 'effort3', temperature: 1.0, top_p: 0.95, patience: 120000, note: 'Vision + tools · can be slow on the free tier' },
   { id: 'google/gemma-4-31b-it', label: 'Gemma 4 31B', vendor: 'Google', vision: true, tools: false, reasoning: 'gemma', temperature: 1.0, top_p: 0.95, note: 'Vision · tools via text protocol' },
   { id: 'nvidia/nemotron-3-ultra-550b-a55b', label: 'Nemotron 3 Ultra', vendor: 'NVIDIA', vision: false, tools: true, reasoning: 'thinking', temperature: 1.0, top_p: 0.95, note: 'Largest · text only (photos go to the vision model)' },
 ];
@@ -65,7 +65,7 @@ export function resetQuirks() { quirks = {}; try { localStorage.removeItem(QUIRK
 
 // Free-tier models are sometimes queued for minutes. A model that times out or errors is skipped
 // for a while so the app can fall back to one that answers.
-const BUSY_MS = 20 * 60 * 1000;
+const BUSY_MS = 10 * 60 * 1000;
 export const RETRYABLE = new Set([404, 408, 500, 502, 503, 504, 524]);
 export const isBusy = model => (quirks[model]?.busyUntil || 0) > Date.now();
 function markBusy(model) { setQuirk(model, { busyUntil: Date.now() + BUSY_MS }); }
@@ -77,8 +77,10 @@ export function modelChain(preferred, fallbacks = []) {
   const all = [preferred, ...fallbacks].filter((m, i, a) => m && a.indexOf(m) === i);
   return [...all.filter(m => !isBusy(m)), ...all.filter(m => isBusy(m))];
 }
-const FIRST_BYTE_MS = 45000; // streaming: headers arrive as soon as generation starts
-const NON_STREAM_MS = 95000; // Cloudflare cuts proxied requests off at ~100 s anyway
+// How long to wait for a model's first token before falling back. Big models get longer because
+// NVIDIA's free tier queues them; per-model values live in MODELS (patience).
+const DEFAULT_PATIENCE_MS = 45000;
+const NON_STREAM_MS = 95000; // non-streaming replies can't use the proxy's keep-alive
 
 function reasoningParams(m, effort) {
   const e = effort || getSettings().ai?.effort || 'balanced';
@@ -149,7 +151,8 @@ async function* sse(res) {
  * One chat completion. Returns { content, thought, toolCalls, finish, usage }.
  * onDelta({ content, thought, toolCalls }) fires while streaming.
  */
-export async function chat({ model, messages, tools, stream = true, signal, onDelta, maxTokens = 4096, effort, temperature }) {
+export async function chat(opts) {
+  const { model, messages, tools, stream = true, signal, onDelta, onWait, maxTokens = 4096, effort, temperature } = opts;
   const { base, key } = connection();
   if (!base) throw new CloudError('Cloud AI is not set up yet. Add your proxy URL in Profile → AI.');
   const m = modelInfo(model);
@@ -174,12 +177,36 @@ export async function chat({ model, messages, tools, stream = true, signal, onDe
   }
   if (!q.noExtras) Object.assign(body, reasoningParams(m, effort));
 
-  let res;
+  // One timer covers the whole wait for the first real data: the proxy answers immediately and sends
+  // keep-alives while NVIDIA queues the request, so "headers arrived" no longer means "model started".
   const ctrl = new AbortController();
   const forward = () => ctrl.abort();
   signal?.addEventListener('abort', forward);
-  let timedOut = false;
-  const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, body.stream ? FIRST_BYTE_MS : NON_STREAM_MS);
+  const patience = body.stream ? m.patience || DEFAULT_PATIENCE_MS : NON_STREAM_MS;
+  const t0 = Date.now();
+  let gotData = false, timedOut = false;
+  const waitTimer = setInterval(() => {
+    const ms = Date.now() - t0;
+    if (gotData) return;
+    onWait?.(Math.round(ms / 1000));
+    if (ms > patience) { timedOut = true; ctrl.abort(); }
+  }, 1000);
+  const cleanup = () => { clearInterval(waitTimer); signal?.removeEventListener('abort', forward); };
+  const timeoutError = () => { markBusy(model); return new CloudError(friendly(408, '', model), 408); };
+
+  // Error handling shared by HTTP errors and errors the proxy relays inside the stream.
+  const fail = (status, text) => {
+    if ([502, 503, 504, 524].includes(status)) markBusy(model);
+    if (status === 400 || status === 422) {
+      const retry = patch => { setQuirk(model, patch); return chat(opts); };
+      if (body.tools && /tool/i.test(text)) { setQuirk(model, { noTools: true }); throw new ToolsUnsupported(); }
+      if (!q.noExtras && /reasoning|chat_template|thinking|unexpected|extra|unrecognized|not permitted|unknown/i.test(text)) return retry({ noExtras: true });
+      if (body.stream && /stream/i.test(text)) return retry({ noStream: true });
+    }
+    throw new CloudError(friendly(status, text, model), status, text);
+  };
+
+  let res;
   try {
     res = await fetch(`${base}/chat/completions`, {
       method: 'POST',
@@ -188,29 +215,20 @@ export async function chat({ model, messages, tools, stream = true, signal, onDe
       signal: ctrl.signal,
     });
   } catch (e) {
-    signal?.removeEventListener('abort', forward);
-    if (timedOut) { markBusy(model); throw new CloudError(friendly(408, '', model), 408); }
+    cleanup();
+    if (timedOut) throw timeoutError();
     if (e.name === 'AbortError') throw e;
     throw new CloudError(navigator.onLine ? "Can't reach your AI proxy. Check the URL in Profile → AI." : "You're offline.");
-  } finally {
-    clearTimeout(timer);
   }
 
   if (!res.ok) {
-    signal?.removeEventListener('abort', forward);
-    if ([502, 503, 504, 524].includes(res.status)) markBusy(model);
-    const text = await res.text().catch(() => '');
-    if (res.status === 400 || res.status === 422) {
-      const retry = patch => { setQuirk(model, patch); return chat({ model, messages, tools, stream, signal, onDelta, maxTokens, effort, temperature }); };
-      if (body.tools && /tool/i.test(text)) { setQuirk(model, { noTools: true }); throw new ToolsUnsupported(); }
-      if (!q.noExtras && /reasoning|chat_template|thinking|unexpected|extra|unrecognized|not permitted|unknown/i.test(text)) return retry({ noExtras: true });
-      if (body.stream && /stream/i.test(text)) return retry({ noStream: true });
-    }
-    throw new CloudError(friendly(res.status, text, model), res.status, text);
+    cleanup();
+    return fail(res.status, await res.text().catch(() => ''));
   }
 
   if (!body.stream) {
-    const j = await res.json();
+    let j;
+    try { j = await res.json(); } catch (e) { if (timedOut) throw timeoutError(); throw e; } finally { cleanup(); }
     const ch = j.choices?.[0] || {};
     const msg = ch.message || {};
     const { content, thought } = splitThinking(msg.content || '', msg.reasoning_content || msg.reasoning);
@@ -219,23 +237,32 @@ export async function chat({ model, messages, tools, stream = true, signal, onDe
 
   let raw = '', reasoning = '', finish, usage;
   const calls = [];
-  for await (const chunk of sse(res)) {
-    if (chunk.usage) usage = chunk.usage;
-    const ch = chunk.choices?.[0];
-    if (!ch) continue;
-    const d = ch.delta || {};
-    const r = d.reasoning_content ?? d.reasoning;
-    if (r) reasoning += r;
-    if (d.content) raw += d.content;
-    for (const tc of d.tool_calls || []) {
-      const i = tc.index ?? calls.length;
-      calls[i] ??= { id: '', type: 'function', function: { name: '', arguments: '' } };
-      if (tc.id) calls[i].id = tc.id;
-      if (tc.function?.name) calls[i].function.name += tc.function.name;
-      if (tc.function?.arguments) calls[i].function.arguments += tc.function.arguments;
+  try {
+    for await (const chunk of sse(res)) {
+      if (chunk.error) { cleanup(); return fail(+chunk.error.status || 502, String(chunk.error.message || '')); }
+      if (chunk.usage) usage = chunk.usage;
+      const ch = chunk.choices?.[0];
+      if (!ch) continue;
+      gotData = true;
+      const d = ch.delta || {};
+      const r = d.reasoning_content ?? d.reasoning;
+      if (r) reasoning += r;
+      if (d.content) raw += d.content;
+      for (const tc of d.tool_calls || []) {
+        const i = tc.index ?? calls.length;
+        calls[i] ??= { id: '', type: 'function', function: { name: '', arguments: '' } };
+        if (tc.id) calls[i].id = tc.id;
+        if (tc.function?.name) calls[i].function.name += tc.function.name;
+        if (tc.function?.arguments) calls[i].function.arguments += tc.function.arguments;
+      }
+      if (ch.finish_reason) finish = ch.finish_reason;
+      if (onDelta && (r || d.content || d.tool_calls)) onDelta({ ...splitThinking(raw, reasoning), toolCalls: calls });
     }
-    if (ch.finish_reason) finish = ch.finish_reason;
-    if (onDelta && (r || d.content || d.tool_calls)) onDelta({ ...splitThinking(raw, reasoning), toolCalls: calls });
+  } catch (e) {
+    if (timedOut) throw timeoutError();
+    throw e;
+  } finally {
+    cleanup();
   }
   const { content, thought } = splitThinking(raw, reasoning);
   return { content, thought, rawReasoning: reasoning, toolCalls: calls.filter(Boolean), finish, usage };

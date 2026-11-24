@@ -297,6 +297,54 @@ export const TOOLS = [
     },
   },
   {
+    name: 'log_food_by_name', risk: 'write',
+    description: 'Fastest way to log a food: finds the best match for a plain food name (your foods first, then generic, then USDA/Open Food Facts) and logs it in one step. Use this for everyday foods; call it several times in one turn for several foods. If the match is uncertain it returns candidates instead of logging.',
+    parameters: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Plain food name, e.g. "banana", "greek yogurt", "white rice"' },
+        grams: { type: 'number' },
+        servings: { type: 'number', description: 'Multiples of the food’s standard serving (e.g. 1 = one medium banana)' },
+        meal: { type: 'string', enum: MEAL_IDS },
+        date: { type: 'string', description: 'YYYY-MM-DD, default today' },
+      },
+      required: ['name'],
+    },
+    preview: ({ name, grams, servings, meal }) => `Log ${name}${grams ? ` · ${fmt(grams)} g` : servings ? ` · ${servings} serving(s)` : ''} to ${mealName(normMeal(meal))}`,
+    async run(args, ctx) {
+      const q = coreQuery(String(args.name || ''));
+      if (!q) throw new Error('Give a food name');
+      const terms = q.split(/\s+/);
+      const saved = (await store.allFoods()).filter(f => f.per100?.kcal != null && terms.every(t => `${f.name} ${f.brand || ''}`.toLowerCase().includes(t)))
+        .sort((a, b) => (b.source === 'custom') - (a.source === 'custom') || (b.uses || 0) - (a.uses || 0));
+      let food = saved[0] || searchBuiltin(q, 1)[0];
+      let candidates = [];
+      if (!food && navigator.onLine) {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 9000);
+        const [u, o] = await Promise.allSettled([searchUSDA(q, ctrl.signal), searchOFF(q, ctrl.signal)]);
+        clearTimeout(timer);
+        const usda = u.status === 'fulfilled' ? rankPlain(u.value, q) : [];
+        const off = o.status === 'fulfilled' ? o.value : [];
+        candidates = [...usda.slice(0, 4), ...off.slice(0, 4)];
+        candidates.forEach(f => ctx.foods.set(f.id, f));
+        // Only auto-pick when the top USDA result covers every word of the name and isn't processed.
+        const top = usda[0];
+        if (top && tokens(q).every(t => tokens(top.name).includes(t)) && !PROCESSED.test(top.name)) food = top;
+      }
+      if (!food) {
+        return {
+          result: { logged: false, reason: 'No confident match', candidates: candidates.map(compactFood), next: 'Pick a candidate and call log_food with its food_id, or quick_add an estimate.' },
+          card: { icon: 'search', title: `No exact match for “${q}”`, detail: plural(candidates.length, 'candidate') },
+        };
+      }
+      ctx.foods.set(food.id, food);
+      const out = await toolByName.get('log_food').run({ food_id: food.id, grams: args.grams, servings: args.servings, meal: args.meal, date: args.date }, ctx);
+      out.result.matched = { food_id: food.id, name: food.name, source: food.source };
+      return out;
+    },
+  },
+  {
     name: 'quick_add', risk: 'write',
     description: 'Log calories/macros directly when no database food fits (restaurant meals, recipes). Use careful estimates.',
     parameters: {

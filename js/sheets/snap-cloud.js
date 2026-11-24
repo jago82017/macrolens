@@ -52,6 +52,7 @@ export async function runCloudSnap(pane, ctx, { file, hint, photoUrl, alive, onR
       const li = pane.querySelector('[data-step="vision"]');
       if (!li) return;
       if (info.model) li.querySelector('.st-label').textContent = `Asking ${modelInfo(info.model).label}${passLabel}`;
+      if (info.waiting) li.querySelector('.st-pct').textContent = `queued ${info.waiting}s`;
       if (info.chars) li.querySelector('.st-pct').textContent = info.thinking ? 'thinking…' : 'writing…';
     }
   };

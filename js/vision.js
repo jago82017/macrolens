@@ -265,6 +265,7 @@ export async function estimateMealCloud(file, { hint = '', onStep = () => {}, si
     let chars = 0;
     const r = await chat({
       model: id, messages, signal, maxTokens, temperature: second ? 0.8 : undefined,
+      onWait: s => { if (s >= 4) onStep('vision', { model: id, waiting: s }); },
       onDelta: d => { const n = (d.content?.length || 0) + (d.thought?.length || 0); if (n - chars > 200) { chars = n; onStep('vision', { model: id, chars: n, thinking: !d.content }); } },
     });
     try {
