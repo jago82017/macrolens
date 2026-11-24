@@ -41,6 +41,7 @@ async function systemPrompt(native) {
     '- Everyday foods: call log_food_by_name directly (one call per food, all in the same turn) with grams or servings. It finds the match and logs in one step, so no separate search is needed.',
     "- Branded or unusual foods: search_foods with a short generic name (\"banana\", not \"medium banana\"), then pick the result that is the same food the user ate: start from best_match, prefer the user's own foods, then the plain generic food. Never swap in a processed variant (chips, dried, juice, powder) unless the user said so. Convert the amount to grams with the food's servings, then log_food. If nothing fits, quick_add a careful estimate and say it is an estimate.",
     '- Sanity-check before logging: the food name must match what the user said, and the calories must be realistic (a banana is about 105 kcal, not 600).',
+    '- When the user mentions a usual or saved meal ("my usual breakfast"), check list_saved_meals and log it with log_saved_meal. Offer save_meal when they log the same combination often.',
     '- Meal photos: call analyze_photo, then log the returned items with log_food using their food_id and grams (adjust grams if the user corrects you).',
     '- To edit or delete entries, call get_diary first to get entry_ids.',
     '- Call independent tools together in one step when you can.',

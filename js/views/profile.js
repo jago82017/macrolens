@@ -1,6 +1,6 @@
 // Profile & settings: targets, macro calculator, preferences, AI model, food databases, data & storage.
 
-import { getSettings, saveSettings, allFoods, deleteFood, exportAll, importAll, resetAll, emit } from '../store.js';
+import { getSettings, saveSettings, allFoods, deleteFood, exportAll, importAll, resetAll, emit, allMeals, deleteMeal, getEntriesRange } from '../store.js';
 import { storageInfo, requestPersistence } from '../db.js';
 import { kcalFromMacros, macroSplit } from '../nutrition.js';
 import { openSheet, toast, confirmSheet } from '../ui.js';
@@ -14,7 +14,7 @@ import { GRADES, TIERS, planLabel, tierDot } from '../grade.js';
 import { MODELS, modelInfo, isConfigured, testConnection, listModels, resetQuirks } from '../cloud.js';
 import { openAISetupGuide } from '../sheets/aisetup.js';
 
-export const APP_VERSION = '1.2.2';
+export const APP_VERSION = '1.3.0';
 
 function modelOptions(current, visionOnly) {
   const list = MODELS.filter(m => !visionOnly || m.vision);
@@ -69,7 +69,7 @@ function aiCard(s) {
 export async function render(el, params = []) {
   const s = getSettings();
   const tg = s.targets;
-  const [info, cached, memCount, foods] = await Promise.all([storageInfo(), isModelCached(), memoryCount(), allFoods()]);
+  const [info, cached, memCount, foods, meals] = await Promise.all([storageInfo(), isModelCached(), memoryCount(), allFoods(), allMeals()]);
   const custom = foods.filter(f => f.source === 'custom');
   const sp = macroSplit(tg);
   const initials = (s.name || '?').trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase();
@@ -141,6 +141,7 @@ export async function render(el, params = []) {
         <p class="muted small">Free at <a class="link" href="https://fdc.nal.usda.gov/api-key-signup" target="_blank" rel="noopener">fdc.nal.usda.gov</a>. Open Food Facts needs no key.</p>
       </div>
       <button class="set-row as-btn" data-act="foods"><span>My custom foods<small class="muted">${custom.length} saved</small></span>${icon('chevR', 18)}</button>
+      <button class="set-row as-btn" data-act="meals"><span>My saved meals<small class="muted">${meals.length} saved · save one from a meal's ⋯ menu in the diary</small></span>${icon('chevR', 18)}</button>
       <button class="btn soft block" data-act="newfood">${icon('plus', 18)} Create custom food</button>
     </section>
 
@@ -153,6 +154,7 @@ export async function render(el, params = []) {
         <button class="btn soft" data-act="export">${icon('download', 18)} Export</button>
         <label class="btn soft">${icon('upload', 18)} Import<input type="file" accept="application/json,.json" hidden data-import></label>
       </div>
+      <button class="btn ghost block" data-act="csv">${icon('download', 16)} Export diary as spreadsheet (CSV)</button>
       <button class="btn ghost block danger-text" data-act="reset">${icon('trash', 16)} Erase all data</button>
     </section>
 
@@ -224,6 +226,17 @@ export async function render(el, params = []) {
     if (act === 'targets') openTargetsSheet();
     if (act === 'grades-help') openGradesHelp();
     if (act === 'foods') openFoodsManager();
+    if (act === 'meals') openMealsManager();
+    if (act === 'csv') {
+      const rows = (await getEntriesRange('0000-01-01', '9999-12-31')).sort((a, b) => a.date.localeCompare(b.date) || a.createdAt - b.createdAt);
+      const cols = ['date', 'meal', 'name', 'brand', 'grams', 'kcal', 'protein', 'carbs', 'fat', 'fiber', 'sugar', 'sodium', 'source'];
+      const cell = v => { const s = v == null ? '' : typeof v === 'number' ? String(Math.round(v * 10) / 10) : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+      const csv = [cols.join(','), ...rows.map(r => cols.map(c => cell(r[c])).join(','))].join('\n');
+      const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })), download: `macrolens-diary-${todayKey()}.csv` });
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      toast(`Exported ${rows.length} entries`, { icon: 'download' });
+    }
     if (act === 'newfood') openFoodEditor(null);
     if (act === 'install') promptInstall();
     if (act === 'persist') {
@@ -344,6 +357,24 @@ async function openFoodsManager() {
       } else openFoodEditor(food, { onSaved: draw });
     };
   };
+  draw();
+}
+
+function openMealsManager() {
+  const sheet = openSheet({ title: 'My saved meals', html: '<div class="list meals-list"></div>', full: true });
+  const host = sheet.el.querySelector('.meals-list');
+  const draw = async () => {
+    const meals = await allMeals();
+    host.innerHTML = meals.length
+      ? meals.map(m => `<div class="manage-row"><div class="meal-pick"><span class="li-thumb">${m.emoji || '🍽️'}</span><span class="li-main"><span class="li-title">${esc(m.name)}</span><span class="li-sub">${esc(m.items.map(i => i.name).join(', '))} · ${fmt(m.kcal)} kcal</span></span></div><button class="btn-icon ghost sm" data-del="${esc(m.id)}" aria-label="Delete">${icon('trash', 16)}</button></div>`).join('')
+      : '<p class="empty">No saved meals yet. In the diary, tap ⋯ on a meal and choose Save.</p>';
+  };
+  host.addEventListener('click', async e => {
+    const del = e.target.closest('[data-del]');
+    if (!del) return;
+    const meal = (await allMeals()).find(m => m.id === del.dataset.del);
+    if (meal && await confirmSheet({ title: 'Delete saved meal?', message: `“${esc(meal.name)}” will be removed. Diary entries stay.`, ok: 'Delete', danger: true })) { await deleteMeal(meal.id); draw(); }
+  });
   draw();
 }
 

@@ -185,7 +185,9 @@ export function ring({ key, value, max, size = 120, stroke = 12, color = 'var(--
     return `<circle class="ring-fill ${extra}" cx="${mid}" cy="${mid}" r="${r}" fill="none" stroke="${col}" stroke-width="${stroke}" stroke-linecap="round"
       stroke-dasharray="${c.toFixed(2)}" style="stroke-dashoffset:${from.toFixed(2)}" data-to="${target.toFixed(2)}" transform="rotate(-90 ${mid} ${mid})"/>`;
   };
-  return `<div class="ring ${cls}" style="width:${size}px;height:${size}px">
+  const done = p >= 1 ? 'done' : '';
+  const glow = String(color).startsWith('url(') ? 'var(--brand)' : color;
+  return `<div class="ring ${cls} ${done}" style="width:${size}px;height:${size}px;--rc:${glow}">
     <svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">
       <circle cx="${mid}" cy="${mid}" r="${r}" fill="none" stroke="var(--track)" stroke-width="${stroke}"/>
       ${main > 0 || (key && lastOffsets.has(key)) ? circle(key, color, main) : ''}

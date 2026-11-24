@@ -3,7 +3,8 @@
 import { openSheet, toast, skeletonRows } from '../ui.js';
 import { icon } from '../icons.js';
 import { esc, fmt, round, MEALS, mealName, mealForNow, todayKey, relDay, debounce, haptic } from '../util.js';
-import { allFoods, recentFoods, addEntry, addEntries, touchFood, getSettings, saveSettings } from '../store.js';
+import { allFoods, recentFoods, addEntry, addEntries, touchFood, getSettings, saveSettings, allMeals, logMeal } from '../store.js';
+import { voiceSupported, listen } from '../voice.js';
 import { runCloudSnap, snapEngine } from './snap-cloud.js';
 import { isConfigured, modelInfo } from '../cloud.js';
 import { openAISetupGuide } from './aisetup.js';
@@ -98,17 +99,39 @@ function searchPane(pane, ctx, { query = '', pick } = {}) {
     <div class="search-box sticky">${icon('search', 18)}
       <input type="search" placeholder="Search foods, brands, dishes…" enterkeyhint="search" autocomplete="off" value="${esc(query)}">
       <button class="btn-icon ghost sm clear" hidden aria-label="Clear">${icon('x', 16)}</button>
+      ${voiceSupported ? `<button class="btn-icon ghost sm mic" aria-label="Search by voice">${icon('mic', 16)}</button>` : ''}
     </div>
     <div class="results"></div>`;
   const input = pane.querySelector('input');
   const clearBtn = pane.querySelector('.clear');
   const results = pane.querySelector('.results');
   const byId = new Map();
+  const mealsById = new Map();
   let ctrl = null, seq = 0, shownIds = new Set();
   const reg = list => { list.forEach(f => byId.set(f.id, f)); return list; };
   const section = (title, list, extra = '') => list.length ? `<section class="res-sec"><h4>${title}${extra}</h4><div class="list">${list.map(foodRow).join('')}</div></section>` : '';
+  const mealSection = meals => {
+    meals.forEach(m => mealsById.set(m.id, m));
+    return meals.length ? `<section class="res-sec"><h4>${icon('star', 14)} Saved meals</h4><div class="list">${meals.map(m => `
+      <button class="meal-pick" data-mealpick="${esc(m.id)}">
+        <span class="li-thumb">${m.emoji || '🍽️'}</span>
+        <span class="li-main"><span class="li-title">${esc(m.name)}</span><span class="li-sub">${m.items.length} item${m.items.length > 1 ? 's' : ''} · ${fmt(m.kcal)} kcal</span></span>
+        ${icon('plus', 18)}
+      </button>`).join('')}</div></section>` : '';
+  };
 
-  results.addEventListener('click', e => {
+  results.addEventListener('click', async e => {
+    const mp = e.target.closest('[data-mealpick]');
+    if (mp && !pick) {
+      const meal = mealsById.get(mp.dataset.mealpick);
+      if (!meal || mp.disabled) return;
+      mp.disabled = true;
+      await logMeal(meal, { date: ctx.date, meal: ctx.meal });
+      ctx.onAdded(meal.name, meal.kcal);
+      checkGoals(ctx.date);
+      mp.disabled = false;
+      return;
+    }
     const row = e.target.closest('[data-fid]');
     if (row) {
       const food = byId.get(row.dataset.fid);
@@ -122,12 +145,13 @@ function searchPane(pane, ctx, { query = '', pick } = {}) {
   });
 
   async function showDefault() {
-    const [recent, all] = await Promise.all([recentFoods(12), allFoods()]);
+    const [recent, all, meals] = await Promise.all([recentFoods(12), allFoods(), pick ? [] : allMeals()]);
     const favs = all.filter(f => f.favorite).slice(0, 12);
     const mine = all.filter(f => f.source === 'custom').sort((a, b) => (b.lastUsed || b.createdAt) - (a.lastUsed || a.createdAt)).slice(0, 12);
     const popular = ['banana', 'chicken', 'rice', 'greekyogurt', 'boiledegg', 'oatmeal', 'avocado', 'salmon'].map(k => BUILTIN_FOODS.find(f => f.key === k));
     reg([...favs, ...recent, ...mine, ...popular]);
     results.innerHTML =
+      mealSection(meals.slice(0, 8)) +
       section(`${icon('star', 14)} Favourites`, favs) +
       section(`${icon('refresh', 14)} Recent`, recent) +
       section(`${icon('edit', 14)} My foods`, mine) +
@@ -143,11 +167,13 @@ function searchPane(pane, ctx, { query = '', pick } = {}) {
     const stored = (await allFoods()).map(f => ({ f, s: scoreLocal(f, terms) })).filter(x => x.s >= 0).sort((a, b) => b.s - a.s).map(x => x.f);
     const storedIds = new Set(stored.map(f => f.id));
     const local = [...stored, ...searchBuiltin(q).filter(f => !storedIds.has(f.id))].slice(0, 20);
+    const meals = pick ? [] : (await allMeals()).filter(m => terms.every(t => m.name.toLowerCase().includes(t)));
     if (my !== seq) return;
     reg(local);
     shownIds = new Set(local.map(f => f.id));
     const online = q.length >= 3;
     results.innerHTML =
+      mealSection(meals.slice(0, 4)) +
       section(`${icon('database', 14)} On this device`, local) +
       (online ? `<section class="res-sec" data-sec="off"><h4>${icon('scan', 14)} Open Food Facts</h4><div class="list">${skeletonRows(3)}</div></section>
                  <section class="res-sec" data-sec="usda"><h4>${icon('leaf', 14)} USDA generic foods</h4><div class="list">${skeletonRows(3)}</div></section>` : '') +
@@ -183,9 +209,24 @@ function searchPane(pane, ctx, { query = '', pick } = {}) {
   };
   input.addEventListener('input', onInput);
   clearBtn.addEventListener('click', () => { input.value = ''; onInput(); input.focus(); });
+  let stopVoice = null;
+  pane.querySelector('.mic')?.addEventListener('click', e => {
+    const mic = e.currentTarget;
+    if (stopVoice) { stopVoice(); return; }
+    mic.classList.add('listening');
+    haptic(10);
+    stopVoice = listen({
+      onText: text => { input.value = text; onInput(); },
+      onEnd: err => {
+        mic.classList.remove('listening');
+        stopVoice = null;
+        if (err && err !== 'no-speech' && err !== 'aborted') toast(err === 'not-allowed' ? 'Microphone access is blocked for this app' : `Voice input failed (${err})`, { icon: 'info' });
+      },
+    });
+  });
   onInput();
   if (!query) setTimeout(() => input.focus({ preventScroll: true }), 350);
-  return () => { seq++; ctrl?.abort(); };
+  return () => { seq++; ctrl?.abort(); stopVoice?.(); };
 }
 
 const createCta = q => `

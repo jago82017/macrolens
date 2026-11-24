@@ -1,7 +1,7 @@
 // Thin promise wrapper around IndexedDB. One database, several object stores.
 
 const DB_NAME = 'macrolens';
-const DB_VERSION = 2; // v2: Coach chat history
+const DB_VERSION = 3; // v2: Coach chat history · v3: saved meals
 let dbPromise;
 
 export function openDB() {
@@ -23,6 +23,7 @@ export function openDB() {
       make('aiMemory', { keyPath: 'id' });
       make('embeddings', { keyPath: 'key' });
       make('chats', { keyPath: 'id' });
+      make('meals', { keyPath: 'id' });
     };
     req.onsuccess = () => {
       const db = req.result;

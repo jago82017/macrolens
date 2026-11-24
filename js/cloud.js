@@ -11,12 +11,13 @@ import { getSettings } from './store.js';
 export const MODELS = [
   { id: 'nvidia/nemotron-3.5-super-vl-120b-a12b', label: 'Nemotron 3.5 Super VL', vendor: 'NVIDIA', vision: true, tools: true, reasoning: 'thinking', temperature: 0.6, top_p: 0.95, note: 'Best for photos · tools work · ~10 s per step' },
   // Its hosted endpoint drops image requests, so photos go to the vision model via analyze_photo.
-  { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', label: 'Nemotron 3 Nano Omni', vendor: 'NVIDIA', vision: false, tools: true, reasoning: 'thinking', temperature: 0.6, top_p: 0.95, note: 'Fastest Coach (~1 s) · photos go to your photo model' },
+  { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', label: 'Nemotron 3 Nano Omni', vendor: 'NVIDIA', vision: false, tools: true, reasoning: 'thinking', temperature: 0.6, top_p: 0.95, note: 'Fastest Coach (~1.5 s) · photos go to your photo model' },
+  { id: 'nvidia/nemotron-3.5-lightning-30b-a3b', label: 'Nemotron 3.5 Lightning', vendor: 'NVIDIA', vision: false, tools: true, reasoning: 'thinking', temperature: 0.6, top_p: 0.95, note: 'Newest fast Coach (~2 s) · text only' },
   { id: 'moonshotai/kimi-k3.1-pro', label: 'Kimi K3.1 Pro', vendor: 'Moonshot', vision: true, tools: true, reasoning: 'effort', temperature: 1.0, top_p: 0.95, patience: 180000, note: 'Most capable · NVIDIA queues it, often 1–2 min per reply' },
   { id: 'z-ai/glm-5.3-flash', label: 'GLM-5.3 Flash', vendor: 'Z.ai', vision: true, tools: true, reasoning: 'effort', temperature: 0.7, top_p: 0.95, patience: 120000, note: 'Vision + tools · can be slow on the free tier' },
   { id: 'mistralai/mistral-large-4-1t-a52b', label: 'Mistral Large 4', vendor: 'Mistral', vision: true, tools: true, reasoning: 'effort3', temperature: 1.0, top_p: 0.95, patience: 120000, note: 'Vision + tools · can be slow on the free tier' },
   { id: 'google/gemma-4-31b-it', label: 'Gemma 4 31B', vendor: 'Google', vision: true, tools: false, reasoning: 'gemma', temperature: 1.0, top_p: 0.95, note: 'Vision · tools via text protocol' },
-  { id: 'nvidia/nemotron-3-ultra-550b-a55b', label: 'Nemotron 3 Ultra', vendor: 'NVIDIA', vision: false, tools: true, reasoning: 'thinking', temperature: 1.0, top_p: 0.95, note: 'Largest · text only (photos go to the vision model)' },
+  { id: 'nvidia/nemotron-3-ultra-550b-a55b', label: 'Nemotron 3 Ultra', vendor: 'NVIDIA', vision: false, tools: true, reasoning: 'thinking', temperature: 1.0, top_p: 0.95, note: 'Smartest that reliably answers (~15 s) · text only' },
 ];
 
 export const modelInfo = id => MODELS.find(m => m.id === id) || { id, label: id.split('/').pop(), vendor: id.split('/')[0], vision: true, tools: true, reasoning: null, custom: true };
@@ -70,7 +71,7 @@ export const RETRYABLE = new Set([404, 408, 500, 502, 503, 504, 524]);
 export const isBusy = model => (quirks[model]?.busyUntil || 0) > Date.now();
 function markBusy(model) { setQuirk(model, { busyUntil: Date.now() + BUSY_MS }); }
 // Tested working for Coach (tool calls) on 24 Nov 2026, fastest first.
-export const AGENT_FALLBACKS = ['nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', 'nvidia/nemotron-3.5-super-vl-120b-a12b'];
+export const AGENT_FALLBACKS = ['nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', 'nvidia/nemotron-3.5-lightning-30b-a3b', 'nvidia/nemotron-3.5-super-vl-120b-a12b'];
 
 // Preferred model first, then fallbacks; models marked busy go to the back of the queue.
 export function modelChain(preferred, fallbacks = []) {

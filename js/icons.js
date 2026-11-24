@@ -51,6 +51,8 @@ const P = {
   stop: '<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/>',
   undo: '<path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/>',
   message: '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>',
+  mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"/>',
+  medal: '<circle cx="12" cy="15" r="6"/><path d="M8.2 10.4 6 2h4l2 5 2-5h4l-2.2 8.4"/><path d="m12 12.5.9 1.8 2 .3-1.5 1.4.4 2-1.8-1-1.8 1 .4-2-1.5-1.4 2-.3z"/>',
 };
 
 export function icon(name, size = 20, cls = '') {

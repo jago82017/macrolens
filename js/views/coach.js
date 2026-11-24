@@ -7,6 +7,7 @@ import { openSheet, toast, confirmSheet } from '../ui.js';
 import { icon } from '../icons.js';
 import { esc, haptic, todayKey } from '../util.js';
 import { openAISetupGuide } from '../sheets/aisetup.js';
+import { voiceSupported, listen } from '../voice.js';
 import { sum } from '../nutrition.js';
 
 // The chat keeps its own DOM state; app.js skips data-driven re-renders for this view.
@@ -15,6 +16,7 @@ export const keepAlive = true;
 let unsub = null;
 let draft = '';
 let attachments = [];
+let stopVoice = null;
 
 // ---------- Markdown-lite (escaped first, then a small safe subset) ----------
 function inline(s) {
@@ -150,6 +152,7 @@ export async function render(el, params = []) {
         <div class="att-row"></div>
         <div class="composer-box">
           <label class="btn-icon ghost attach" aria-label="Attach photo">${icon('camera', 20)}<input type="file" accept="image/*" multiple hidden data-attach></label>
+          ${voiceSupported ? `<button class="btn-icon ghost mic" data-act="mic" aria-label="Speak">${icon('mic', 20)}</button>` : ''}
           <textarea rows="1" placeholder="Ask, or tell Coach what you ate…" aria-label="Message Coach"></textarea>
           <button class="send" data-act="send" aria-label="Send">${icon('send', 18)}</button>
         </div>
@@ -261,6 +264,21 @@ export async function render(el, params = []) {
       return;
     }
     if (t.dataset.act === 'model') { openModelPicker(); return; }
+    if (t.dataset.act === 'mic') {
+      if (stopVoice) { stopVoice(); return; }
+      const base = ta.value ? `${ta.value.trim()} ` : '';
+      t.classList.add('listening');
+      haptic(10);
+      stopVoice = listen({
+        onText: text => { ta.value = base + text; draft = ta.value; autosize(); },
+        onEnd: err => {
+          t.classList.remove('listening');
+          stopVoice = null;
+          if (err && err !== 'no-speech' && err !== 'aborted') toast(err === 'not-allowed' ? 'Microphone access is blocked for this app' : `Voice input failed (${err})`, { icon: 'info' });
+        },
+      });
+      return;
+    }
     if (t.dataset.act === 'guide') { openAISetupGuide(); return; }
     if (t.dataset.approve) { agent.approve(t.dataset.approve, true); return; }
     if (t.dataset.deny) { agent.approve(t.dataset.deny, false); return; }

@@ -7,6 +7,8 @@ import { toast, sheetsOpen } from './ui.js';
 import { debounce, todayKey, isKey } from './util.js';
 import { openAddFood } from './sheets/addfood.js';
 import { openOnboarding } from './sheets/onboarding.js';
+import { openSpeedDial } from './sheets/speeddial.js';
+import { initRipples, swapView, moveTabPill } from './motion.js';
 import { installState } from './install.js';
 import * as dashboard from './views/dashboard.js';
 import * as diary from './views/diary.js';
@@ -38,18 +40,20 @@ async function route() {
     params = [];
   }
   if (!ROUTES[name]) name = 'dashboard';
-  const changed = name !== current.name;
+  const from = current.name;
+  const changed = name !== from;
   current = { name, params };
   document.querySelectorAll('.tabbar [data-route]').forEach(a => {
     const on = a.dataset.route === name;
     a.classList.toggle('active', on);
     if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
   });
-  await render(changed);
-  if (changed) window.scrollTo({ top: 0 });
+  moveTabPill(document.querySelector('.tabbar'));
+  await render(changed ? from || 'boot' : null);
 }
 
-async function render(enter = false) {
+// `from` is the previous route when navigating (drives the slide direction), null for data refreshes.
+async function render(from = null) {
   const seq = ++renderSeq;
   const el = document.createElement('div');
   el.className = 'view-inner';
@@ -61,12 +65,12 @@ async function render(enter = false) {
   }
   if (seq !== renderSeq) return;
   renderedDay = todayKey();
-  if (enter) el.classList.add('enter');
-  view.replaceChildren(el);
+  swapView(view, el, from === 'boot' ? null : from, current.name);
+  if (from === 'boot') el.classList.add('enter');
 }
 
 // Data changes refresh the current view, except live views (Coach) that manage their own DOM.
-const rerender = debounce(() => { if (!ROUTES[current.name]?.keepAlive) render(false); }, 40);
+const rerender = debounce(() => { if (!ROUTES[current.name]?.keepAlive) render(null); }, 40);
 
 // ---------- Theme ----------
 const darkMQ = matchMedia('(prefers-color-scheme: dark)');
@@ -84,6 +88,7 @@ darkMQ.addEventListener('change', applyTheme);
 function buildTabbar() {
   const nav = document.querySelector('.tabbar');
   nav.innerHTML = `
+    <span class="tab-pill" aria-hidden="true"></span>
     <a href="#/dashboard" data-route="dashboard">${icon('home', 22)}<span>Home</span></a>
     <a href="#/diary" data-route="diary">${icon('book', 22)}<span>Diary</span></a>
     <button class="fab" aria-label="Add food">${icon('plus', 28)}</button>
@@ -91,8 +96,9 @@ function buildTabbar() {
     <a href="#/week" data-route="week">${icon('chart', 22)}<span>Week</span></a>`;
   nav.querySelector('.fab').addEventListener('click', () => {
     const date = current.name === 'diary' && isKey(current.params[0]) ? current.params[0] : todayKey();
-    openAddFood({ date });
+    openSpeedDial({ date });
   });
+  addEventListener('resize', debounce(() => moveTabPill(nav), 100));
 }
 
 // ---------- Service worker ----------
@@ -128,6 +134,7 @@ async function boot() {
   await loadSettings();
   applyTheme();
   buildTabbar();
+  initRipples();
 
   addEventListener('hashchange', route);
   on('entries', rerender);
@@ -135,6 +142,7 @@ async function boot() {
   on('weights', rerender);
   on('install', rerender);
   on('foods', () => current.name === 'profile' && rerender());
+  on('meals', () => current.name === 'profile' && rerender());
   on('settings', () => { applyTheme(); rerender(); });
 
   document.addEventListener('visibilitychange', () => {

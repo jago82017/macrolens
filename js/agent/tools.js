@@ -345,6 +345,51 @@ export const TOOLS = [
     },
   },
   {
+    name: 'list_saved_meals', risk: 'read',
+    description: "The user's saved meals (reusable groups of foods, e.g. 'My usual breakfast') with their items and calories.",
+    parameters: { type: 'object', properties: {} },
+    async run() {
+      const meals = await store.allMeals();
+      return {
+        result: { meals: meals.map(m => ({ meal_id: m.id, name: m.name, kcal: m.kcal, items: m.items.map(i => `${i.name}${i.grams ? ` ${r1(i.grams)} g` : ''}`), times_used: m.uses || 0 })) },
+        card: { icon: 'star', title: 'Read saved meals', detail: plural(meals.length, 'meal') },
+      };
+    },
+  },
+  {
+    name: 'log_saved_meal', risk: 'write',
+    description: 'Log every food of a saved meal in one step. factor scales the portions (0.5 = half, 2 = double).',
+    parameters: { type: 'object', properties: { meal_id: { type: 'string' }, meal: { type: 'string', enum: MEAL_IDS }, date: { type: 'string' }, factor: { type: 'number' } }, required: ['meal_id'] },
+    async preview({ meal_id, meal }) { const m = await store.getMeal(meal_id); return `Log saved meal “${m?.name || meal_id}” to ${mealName(normMeal(meal))}`; },
+    async run({ meal_id, meal, date, factor = 1 }) {
+      const saved = await store.getMeal(meal_id);
+      if (!saved) throw new Error(`No saved meal ${meal_id}. Use list_saved_meals.`);
+      if (!(factor > 0 && factor <= 5)) throw new Error('factor must be between 0 and 5');
+      const d = normDate(date), m = normMeal(meal);
+      const added = await store.logMeal(saved, { date: d, meal: m, factor });
+      checkGoals(d);
+      const kcal = added.reduce((s, e) => s + (e.kcal || 0), 0);
+      return {
+        result: { logged: added.map(compactEntry), total_kcal: Math.round(kcal) },
+        card: { icon: 'star', title: `Logged ${saved.name}`, detail: `${plural(added.length, 'item')} · ${fmt(kcal)} kcal · ${mealName(m)}` },
+        undo: async () => { for (const a of added) await store.deleteEntry(a.id); },
+      };
+    },
+  },
+  {
+    name: 'save_meal', risk: 'write',
+    description: 'Save the foods currently in one meal of a day as a reusable saved meal.',
+    parameters: { type: 'object', properties: { name: { type: 'string' }, meal: { type: 'string', enum: MEAL_IDS }, date: { type: 'string' } }, required: ['name', 'meal'] },
+    preview: ({ name, meal }) => `Save today's ${mealName(normMeal(meal)).toLowerCase()} as “${name}”`,
+    async run({ name, meal, date }) {
+      const m = normMeal(meal);
+      const list = (await store.getEntries(normDate(date))).filter(e => e.meal === m);
+      if (!list.length) throw new Error('That meal is empty.');
+      const saved = await store.saveMeal({ name: String(name).slice(0, 40), emoji: MEALS.find(x => x.id === m)?.emoji, items: list.map(store.mealItemFrom) });
+      return { result: { saved: { meal_id: saved.id, name: saved.name, kcal: saved.kcal, items: list.length } }, card: { icon: 'star', title: `Saved “${saved.name}”`, detail: `${plural(list.length, 'item')} · ${fmt(saved.kcal)} kcal` }, undo: () => store.deleteMeal(saved.id) };
+    },
+  },
+  {
     name: 'quick_add', risk: 'write',
     description: 'Log calories/macros directly when no database food fits (restaurant meals, recipes). Use careful estimates.',
     parameters: {

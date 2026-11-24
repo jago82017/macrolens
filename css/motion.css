@@ -1,0 +1,151 @@
+/* ===== Motion & delight layer ===== */
+
+/* ---- Page transitions (View Transitions API, direction-aware) ---- */
+@keyframes vt-in-right { from { transform: translateX(32px); opacity: 0; } }
+@keyframes vt-out-left { to { transform: translateX(-32px); opacity: 0; } }
+@keyframes vt-in-left { from { transform: translateX(-32px); opacity: 0; } }
+@keyframes vt-out-right { to { transform: translateX(32px); opacity: 0; } }
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: 0.3s; animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1); }
+html[data-nav-dir='forward']::view-transition-old(root) { animation-name: vt-out-left; }
+html[data-nav-dir='forward']::view-transition-new(root) { animation-name: vt-in-right; }
+html[data-nav-dir='back']::view-transition-old(root) { animation-name: vt-out-right; }
+html[data-nav-dir='back']::view-transition-new(root) { animation-name: vt-in-left; }
+.tabbar { view-transition-name: tabbar; }
+::view-transition-group(tabbar), ::view-transition-old(tabbar), ::view-transition-new(tabbar) { animation: none; }
+
+/* ---- Staggered entrances ---- */
+.view-inner.stagger > * { animation: rise 0.5s var(--ease) both; animation-delay: calc(var(--i, 0) * 40ms); }
+@keyframes rise { from { opacity: 0; transform: translateY(12px) scale(0.985); } }
+
+/* ---- Tap ripples ---- */
+:is(.btn, .btn-icon, .chip, .food-row, .entry, .qa-ico, .meal-row, .sugg-chip, .set-row.as-btn, .tabbar a, .cand, .day, .fit-item, .dial-ico, .meal-pick) { position: relative; overflow: hidden; isolation: isolate; }
+.ripple { position: absolute; border-radius: 50%; background: currentColor; opacity: 0.16; transform: scale(0); pointer-events: none; z-index: -1; animation: ripple 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }
+.btn.primary .ripple, .qa-ico .ripple, .dial-ico .ripple { background: #fff; opacity: 0.3; }
+@keyframes ripple { to { transform: scale(1); opacity: 0; } }
+
+/* Tappable cards sink slightly */
+a.card, button.card, .macro-card { transition: transform 0.18s var(--ease), box-shadow 0.2s; }
+a.card:active, button.card:active, .macro-card:active { transform: scale(0.98); }
+
+/* ---- Tab bar: sliding pill + icon pop ---- */
+.tab-pill {
+  position: absolute; left: 0; top: 7px; height: 50px; width: 0; border-radius: 17px; opacity: 0;
+  background: color-mix(in srgb, var(--brand) 14%, transparent);
+  transition: transform 0.5s var(--spring), width 0.5s var(--spring), opacity 0.25s;
+  pointer-events: none; z-index: 0;
+}
+.tabbar a { position: relative; z-index: 1; }
+.tabbar a.active .ico { animation: tabPop 0.5s var(--spring); }
+@keyframes tabPop { 40% { transform: translateY(-4px) scale(1.2); } 100% { transform: translateY(-1px) scale(1.08); } }
+.fab { transition: transform 0.35s var(--spring), box-shadow 0.3s; }
+.fab .ico { transition: transform 0.35s var(--spring); }
+body.dial-open .fab .ico { transform: rotate(45deg); }
+
+/* ---- Rings: completion glow ---- */
+.ring.done svg { animation: ringGlow 2.6s ease-in-out infinite; }
+@keyframes ringGlow { 0%, 100% { filter: drop-shadow(0 0 0 transparent); } 50% { filter: drop-shadow(0 0 7px var(--rc, var(--brand))); } }
+.ring.done .macro-pct::after { content: ' ✓'; }
+
+/* ---- Hero: drifting aurora ---- */
+.hero::before { animation: drift 13s ease-in-out infinite alternate; }
+.hero::after {
+  content: ''; position: absolute; width: 70%; height: 80%; right: -20%; bottom: -35%; pointer-events: none;
+  background: radial-gradient(closest-side, color-mix(in srgb, #ff7ab8 13%, transparent), transparent);
+  animation: drift2 16s ease-in-out infinite alternate;
+}
+@keyframes drift { to { transform: translate(9%, 7%) scale(1.1); } }
+@keyframes drift2 { to { transform: translate(-14%, -10%) scale(1.15); } }
+.hero-ring { z-index: 1; }
+
+/* ---- Water: shimmering glasses ---- */
+.glass.full::before {
+  content: ''; position: absolute; inset: 0; z-index: 1; border-radius: inherit;
+  background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, 0.45) 48%, transparent 60%);
+  background-size: 260% 100%; animation: shine 3.2s linear infinite; animation-delay: calc(var(--i) * 140ms);
+}
+@keyframes shine { from { background-position: 130% 0; } to { background-position: -130% 0; } }
+
+/* ---- Speed dial ---- */
+/* The dial is a sheet without a panel: no transform/will-change, so its fixed children use the viewport. */
+.sheet.dial { position: static; background: none; box-shadow: none; transform: none !important; will-change: auto; max-height: none; width: 0; height: 0; overflow: visible; }
+.sheet.dial .sheet-grab { display: none; }
+.sheet.dial .sheet-body { padding: 0; overflow: visible; }
+.sheet-wrap:has(.sheet.dial) .sheet-backdrop { backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.dial-item {
+  position: fixed; z-index: 2; left: calc(var(--cx) - 30px); top: calc(var(--cy) - 30px); width: 60px;
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  opacity: 0; transform: translate(0, 0) scale(0.3);
+  transition: transform 0.45s var(--spring), opacity 0.2s;
+  transition-delay: calc(var(--i) * 35ms);
+}
+.sheet-wrap.open .dial-item { opacity: 1; transform: translate(var(--x), var(--y)) scale(1); }
+.sheet-wrap.closing .dial-item { transition-delay: 0s; transition-duration: 0.2s; }
+.dial-ico {
+  width: 58px; height: 58px; border-radius: 20px; display: grid; place-items: center; color: #fff;
+  box-shadow: 0 12px 26px -8px rgba(0, 0, 0, 0.5);
+}
+.dial-ico.d-scan { background: linear-gradient(135deg, #ffa24d, #ff6a3d); }
+.dial-ico.d-snap { background: linear-gradient(135deg, #7b6cff, #c17bff 60%, #ff7ab8); }
+.dial-ico.d-search { background: linear-gradient(135deg, #4dd6f5, #2f9cf0); }
+.dial-ico.d-quick { background: linear-gradient(135deg, #ffd060, #ffa03d); }
+.dial-ico.d-coach { background: linear-gradient(135deg, #4ee39b, #22b371); }
+.dial-lbl { font-size: 12px; font-weight: 800; color: #fff; text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6); white-space: nowrap; }
+.dial-close {
+  position: fixed; z-index: 3; left: calc(var(--cx) - 29px); top: calc(var(--cy) - 29px); width: 58px; height: 58px; border-radius: 20px;
+  display: grid; place-items: center; color: #fff;
+  background: linear-gradient(135deg, var(--brand), var(--brand-2) 60%, #ff7ab8);
+  box-shadow: 0 10px 26px color-mix(in srgb, var(--brand) 50%, transparent);
+}
+.dial-close .ico { transition: transform 0.4s var(--spring); }
+.sheet-wrap.open .dial-close .ico { transform: rotate(135deg); }
+
+/* ---- Diary: swipe to delete ---- */
+.entry-wrap { position: relative; border-top: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.entry-wrap > .entry { border-top: 0; background: var(--surface); transition: transform 0.28s var(--ease), background 0.15s; touch-action: pan-y; }
+.entry-wrap > .entry.swiping { transition: none; }
+.entry-bg {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: flex-end; gap: 6px; padding-right: 18px;
+  background: color-mix(in srgb, var(--over) 85%, #000); color: #fff; font-weight: 800; font-size: 13px;
+}
+.entry-bg .ico { transition: transform 0.25s var(--spring); }
+.entry-wrap.armed .entry-bg .ico { transform: scale(1.3); }
+.entry-wrap.gone { animation: collapse 0.3s var(--ease) 0.15s forwards; }
+@keyframes collapse { to { max-height: 0; opacity: 0; } }
+.entry-wrap { max-height: 120px; }
+.meal-more { margin-left: -4px; }
+
+/* ---- Fits what's left ---- */
+.fit-card .card-head { margin-bottom: 8px; }
+.fit-list { display: flex; flex-direction: column; gap: 4px; }
+.fit-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 6px; border-radius: 14px; text-align: left; }
+.fit-item .li-thumb { width: 40px; height: 40px; }
+.fit-item .grow { display: flex; flex-direction: column; min-width: 0; }
+.fit-item small { color: var(--muted); font-weight: 600; }
+.fit-tags { display: flex; gap: 4px; flex: none; }
+.fit-tag { font-size: 11px; font-weight: 800; padding: 3px 7px; border-radius: 8px; background: var(--surface-2); }
+
+/* ---- Saved meals ---- */
+.meal-pick { display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 6px; border-radius: 14px; text-align: left; }
+.meal-pick .li-thumb { font-size: 20px; }
+.meal-menu { display: flex; flex-direction: column; gap: 6px; }
+
+/* ---- Voice input ---- */
+.mic { color: var(--muted); }
+.mic.listening { color: #fff; background: var(--over) !important; animation: micPulse 1.2s ease-in-out infinite; }
+@keyframes micPulse { 50% { box-shadow: 0 0 0 8px color-mix(in srgb, var(--over) 25%, transparent); } }
+
+/* ---- Week: goal weight ---- */
+.goal-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0 4px; font-size: 13px; }
+.goal-bar { height: 8px; border-radius: 99px; background: var(--track); overflow: hidden; margin-top: 6px; }
+.goal-bar span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--fiber), var(--brand)); transition: width 0.9s var(--ease); }
+.goal-line { stroke: var(--fiber); stroke-width: 1.5; stroke-dasharray: 5 5; }
+
+/* ---- Achievements ---- */
+.badge-shelf { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding: 2px 0; }
+.badge-shelf::-webkit-scrollbar { display: none; }
+.achv { flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; width: 76px; padding: 10px 4px; border-radius: 16px; background: var(--surface-2); text-align: center; }
+.achv b { font-size: 24px; line-height: 1; }
+.achv small { font-size: 10.5px; font-weight: 700; color: var(--muted); }
+.achv.locked { opacity: 0.35; filter: grayscale(1); }
+.achv.new { animation: achvPop 0.8s var(--spring); box-shadow: 0 0 0 2px var(--brand); }
+@keyframes achvPop { 0% { transform: scale(0.6); } 70% { transform: scale(1.1); } }

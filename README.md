@@ -5,8 +5,13 @@ An installable, offline-first calorie and macro tracker built to be hosted on **
 ## Features
 
 - **Dashboard**: an animated calorie ring, protein/carb/fat rings with over-target laps, fiber, a water tracker, a logging streak, today's meals and a 7-day sparkline.
-- **Diary**: a week strip with logged-day dots, a date picker, per-meal sections, tap to edit, long-press to delete (with undo), and "copy from yesterday".
-- **Weekly overview**: a calorie bar chart against the target line, a macro adherence heat strip, an average macro-split donut, a body-weight trend (7-point moving average) and generated insights.
+- **Diary**: a week strip with logged-day dots, a date picker, per-meal sections, tap to edit, swipe left (or long-press) to delete with undo, and a ⋯ menu per meal to save it, copy yesterday's, or clear it.
+- **Saved meals**: save any meal (e.g. your usual breakfast) and log it again in one tap from the top of *Add food → Search*. Coach can log them too ("log my usual breakfast"). Manage them in *Profile*.
+- **Fits what's left**: the dashboard suggests three foods whose normal serving best fills your remaining macros, favouring protein and better-graded foods.
+- **Weekly overview**: a calorie bar chart against the target line, a macro adherence heat strip, an average macro-split donut, a body-weight trend (7-point moving average) with a goal weight line and an ETA at your current pace, 12 achievements, and generated insights.
+- **Voice input**: a mic button in food search and in Coach (Web Speech API, Chrome Android).
+- **Motion**: direction-aware page slides (View Transitions API), a sliding tab indicator, staggered card entrances, tap ripples, a radial quick-add menu on the + button, glowing rings when a target is hit, and streak milestone celebrations. All of it respects *reduce motion*.
+- **CSV export**: *Profile → Export diary as spreadsheet* for Excel or Google Sheets.
 - **Automatic macro calculator**: Mifflin-St Jeor BMR × activity, a goal-based deficit or surplus (capped at safe limits), and a diet-style split (balanced, high protein, low carb, keto, endurance). It also runs as the first-run onboarding.
 - **Barcode scanning**: uses the native `BarcodeDetector` on Chrome Android, with a ZXing-WASM fallback elsewhere. It scans a centre crop matching the reticle and requires two identical, checksum-valid reads. Torch toggle and manual entry are included.
 - **Lookup chain**: local cache → **Open Food Facts** → **USDA FoodData Central** (branded UPC match). If nothing is found, a custom food is created with the barcode attached, so it scans instantly next time.
@@ -26,8 +31,8 @@ Macrolens uses NVIDIA's free hosted models through their OpenAI-compatible API (
 | Default | Model | Why |
 |---|---|---|
 | Photos | `nvidia/nemotron-3.5-super-vl-120b-a12b` | NVIDIA's flagship vision-language model |
-| Coach | `moonshotai/kimi-k3.1-pro` | Vision plus tool calling, 1M context |
-| Also listed | Nemotron 3 Nano Omni, GLM-5.3 Flash, Mistral Large 4, Gemma 4 31B, Nemotron 3 Ultra (text only) | |
+| Coach | `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` | Fastest reliable tool calling on the free tier (~1.5 s) |
+| Also listed | Nemotron 3.5 Lightning, Kimi K3.1 Pro, GLM-5.3 Flash, Mistral Large 4, Gemma 4 31B, Nemotron 3 Ultra | Kimi, GLM and Mistral often queue past NVIDIA's ~125 s gateway limit on the free tier, so Coach falls back automatically |
 
 **Cloud photo pipeline** (`js/vision.js`). The big model sees the plate; the numbers stay grounded:
 
@@ -160,9 +165,12 @@ js/vision.js            Cloud photo estimator with nutrition grounding
 js/agent/agent.js       Coach harness: tool loop, approvals, undo, persistence
 js/agent/tools.js       Coach tools over the diary, library, targets, weight and water
 proxy/nvidia-proxy.js   Cloudflare Worker CORS proxy for NVIDIA's API
-js/celebrate.js         Confetti + goal celebrations
+js/celebrate.js         Confetti + goal and streak celebrations
+js/motion.js            Page transitions, staggered entrances, tap ripples, tab indicator
+js/suggest.js           "Fits what's left" food suggestions
+js/voice.js             Speech-to-text for search and Coach
 js/views/*              Dashboard, Diary, Coach, Week, Profile
-js/sheets/*             Add-food sheet, cloud Snap, food detail/forms, calculator, AI setup guide, onboarding
+js/sheets/*             Add-food sheet, radial quick-add, cloud Snap, food detail/forms, calculator, AI setup guide, onboarding
 models/                 Precomputed MobileCLIP text embeddings
 tools/                  Embedding bundle builder
 ```

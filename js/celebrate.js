@@ -109,6 +109,7 @@ export async function celebrate(goal) {
 }
 
 const within = (v, t, tol) => t > 0 && v >= t * (1 - tol) && v <= t * (1 + tol);
+const STREAK_MILESTONES = [3, 7, 14, 30, 50, 100, 200, 365];
 
 // Called after any diary change; only today's progress is celebrated.
 export async function checkGoals(date) {
@@ -122,6 +123,16 @@ export async function checkGoals(date) {
   const done = day.celebrated || {};
   const goals = [];
 
+  // Logging-streak milestones (the first log of a milestone day).
+  const streak = await getStreak();
+  if (STREAK_MILESTONES.includes(streak) && !done[`streak${streak}`]) {
+    goals.push({
+      id: `streak${streak}`, emoji: streak >= 30 ? '☄️' : '🔥', title: `${streak}-day streak!`,
+      sub: streak >= 30 ? 'That\'s a real habit now. Seriously impressive.' : `${streak} days of logging in a row. Keep the fire going.`,
+      big: streak >= 7, accent: '#ff7a3d',
+    });
+  }
+
   if (!done.protein && tg.protein && t.protein >= tg.protein) {
     goals.push({ id: 'protein', emoji: '💪', title: 'Protein target smashed!', sub: `${fmt(t.protein)} g of ${tg.protein} g — your muscles thank you.`, accent: 'var(--protein)' });
   }
@@ -132,7 +143,6 @@ export async function checkGoals(date) {
     goals.push({ id: 'fiber', emoji: '🌿', title: 'Fiber goal reached', sub: `${fmt(t.fiber)} g of fiber today. Gut happy.`, accent: 'var(--fiber)' });
   }
   if (!done.perfect && within(t.kcal, tg.kcal, 0.05) && within(t.protein, tg.protein, 0.1) && within(t.carbs, tg.carbs, 0.1) && within(t.fat, tg.fat, 0.1)) {
-    const streak = await getStreak();
     goals.push({ id: 'perfect', emoji: '🏆', title: 'Perfect macro day!', sub: `Calories and every macro within target.${streak > 1 ? ` ${streak}-day logging streak 🔥` : ''}`, big: true, accent: 'var(--fat)' });
   }
   if (!goals.length) return;

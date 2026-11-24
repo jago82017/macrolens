@@ -4,8 +4,10 @@ import { getSettings, getEntries, getDay, getEntriesRange, getStreak, addWater }
 import { sum } from '../nutrition.js';
 import { ring, pbar, animate } from '../ui.js';
 import { icon } from '../icons.js';
-import { esc, fmt, todayKey, addDays, fmtDate, greeting, MEALS, parseKey, haptic } from '../util.js';
+import { esc, fmt, todayKey, addDays, fmtDate, greeting, MEALS, parseKey, haptic, mealForNow } from '../util.js';
 import { openAddFood } from '../sheets/addfood.js';
+import { openFoodDetail, thumb } from '../sheets/food.js';
+import { suggestFoods } from '../suggest.js';
 import { checkWater } from '../celebrate.js';
 import { installState, promptInstall } from '../install.js';
 
@@ -25,6 +27,7 @@ export async function render(el) {
   const t = sum(entries);
   const remaining = tg.kcal - t.kcal;
   const over = remaining < 0;
+  const fit = entries.length ? await suggestFoods(t, tg) : { picks: [] };
 
   const byMeal = Object.fromEntries(MEALS.map(m => [m.id, entries.filter(e => e.meal === m.id)]));
   const days = Array.from({ length: 7 }, (_, i) => addDays(date, i - 6));
@@ -94,6 +97,22 @@ export async function render(el) {
       <button data-quick="quick"><span class="qa-ico quick">${icon('zap', 22)}</span>Quick add</button>
     </section>
 
+    ${fit.picks.length ? `
+    <section class="card fit-card">
+      <div class="card-head"><h3>${icon('target', 18)} Fits what's left</h3><span class="muted small">${fmt(fit.left.kcal)} kcal · ${fmt(Math.max(0, fit.left.protein))} g protein</span></div>
+      <div class="fit-list">${fit.picks.map((p, i) => `
+        <button class="fit-item" data-fit="${i}">
+          <span class="li-thumb">${thumb(p.food)}</span>
+          <span class="grow"><b>${esc(p.food.name)}</b><small>${esc(p.food.servings?.[0]?.label || '100 g')} · ${fmt(p.nut.kcal)} kcal</small></span>
+          <span class="fit-tags">
+            <span class="fit-tag protein-text">${fmt(p.nut.protein || 0)}P</span>
+            <span class="fit-tag carbs-text">${fmt(p.nut.carbs || 0)}C</span>
+            <span class="fit-tag fat-text">${fmt(p.nut.fat || 0)}F</span>
+          </span>
+        </button>`).join('')}
+      </div>
+    </section>` : ''}
+
     <a class="card coach-card" href="#/coach/ask/${encodeURIComponent(coachPrompt)}">
       <span class="coach-orb">${icon('sparkles', 20)}</span>
       <span class="grow"><b>Ask Coach</b><small>“${esc(coachPrompt)}”</small></span>
@@ -144,6 +163,8 @@ export async function render(el) {
   el.onclick = async e => {
     const q = e.target.closest('[data-quick]');
     if (q) return openAddFood({ tab: q.dataset.quick });
+    const f = e.target.closest('[data-fit]');
+    if (f) return openFoodDetail(fit.picks[+f.dataset.fit].food, { date, meal: mealForNow() });
     const a = e.target.closest('[data-add]');
     if (a) return openAddFood({ meal: a.dataset.add });
     const w = e.target.closest('[data-water]');

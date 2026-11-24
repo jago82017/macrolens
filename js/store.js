@@ -163,6 +163,43 @@ export async function recentFoods(limit = 15) {
   return foods.filter(f => f.lastUsed).sort((a, b) => b.lastUsed - a.lastUsed).slice(0, limit);
 }
 
+// ---- Saved meals (reusable groups of diary entries) ----
+const ENTRY_ONLY = ['id', 'createdAt', 'date', 'meal', 'via'];
+export const mealItemFrom = entry => Object.fromEntries(Object.entries(entry).filter(([k]) => !ENTRY_ONLY.includes(k)));
+
+export async function saveMeal(meal) {
+  const m = { id: uid(), createdAt: Date.now(), uses: 0, ...meal, updatedAt: Date.now() };
+  m.kcal = Math.round(m.items.reduce((s, it) => s + (+it.kcal || 0), 0));
+  await db.put('meals', m);
+  emit('meals', m);
+  return m;
+}
+
+export const allMeals = async () => (await db.all('meals')).sort((a, b) => (b.lastUsed || b.createdAt) - (a.lastUsed || a.createdAt));
+export const getMeal = id => db.get('meals', id);
+
+export async function deleteMeal(id) {
+  await db.del('meals', id);
+  emit('meals', { id, deleted: true });
+}
+
+// Log every item of a saved meal, optionally scaled (factor 0.5 = half portions).
+export async function logMeal(meal, { date, meal: mealId, factor = 1 }) {
+  const NUM = ['kcal', 'protein', 'carbs', 'fat', 'fiber', 'sugar', 'satFat', 'sodium'];
+  const items = meal.items.map(it => {
+    const e = { ...it, date, meal: mealId };
+    if (factor !== 1) {
+      for (const k of NUM) if (e[k] != null) e[k] = Math.round(e[k] * factor * 10) / 10;
+      if (e.grams) e.grams = Math.round(e.grams * factor * 10) / 10;
+      if (e.qty) e.qty = Math.round(e.qty * factor * 100) / 100;
+    }
+    return e;
+  });
+  const added = await addEntries(items);
+  await db.put('meals', { ...meal, uses: (meal.uses || 0) + 1, lastUsed: Date.now() });
+  return added;
+}
+
 // ---- Days (water, celebration flags) ----
 export async function getDay(date) {
   return (await db.get('days', date)) || { date, water: 0, celebrated: {} };
@@ -217,7 +254,7 @@ export async function getStreak() {
 }
 
 // ---- Backup / restore ----
-const BACKUP_STORES = ['entries', 'foods', 'days', 'weights', 'aiMemory'];
+const BACKUP_STORES = ['entries', 'foods', 'days', 'weights', 'aiMemory', 'meals'];
 
 export async function exportAll() {
   // Never write the API key into a backup file.
@@ -246,6 +283,6 @@ export async function importAll(data) {
 }
 
 export async function resetAll() {
-  for (const s of ['entries', 'foods', 'days', 'weights', 'aiMemory', 'settings', 'chats']) await db.clear(s);
+  for (const s of ['entries', 'foods', 'days', 'weights', 'aiMemory', 'settings', 'chats', 'meals']) await db.clear(s);
   settings = structuredClone(DEFAULT_SETTINGS);
 }
