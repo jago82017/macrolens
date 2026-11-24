@@ -12,7 +12,7 @@
 //   5. Cross-checks           – cooking method adds fat/carb deltas to plain base foods, and the model's
 //                               calorie estimate nudges mixed dishes richer/lighter (bounded ±25%).
 
-import { chat, extractJSON, compressImage, imagePart, modelInfo, MODELS, CloudError } from './cloud.js';
+import { chat, extractJSON, compressImage, imagePart, modelInfo, MODELS, CloudError, RETRYABLE, modelChain } from './cloud.js';
 import { BUILTIN_FOODS } from './fooddb.js';
 import { allFoods, getSettings, saveSettings } from './store.js';
 import { searchUSDA } from './api.js';
@@ -255,7 +255,7 @@ export async function estimateMealCloud(file, { hint = '', onStep = () => {}, si
   const maxTokens = effort === 'fast' ? 2500 : 7000;
 
   // Try the chosen vision model, then other vision models if it's unavailable.
-  const order = [s.ai.visionModel, ...MODELS.filter(m => m.vision).map(m => m.id)].filter((v, i, a) => v && a.indexOf(v) === i);
+  const order = modelChain(s.ai.visionModel, MODELS.filter(m => m.vision).map(m => m.id));
   let model = null, passes = [], summary = '', imageQuality = '';
   const run = async (id, second) => {
     const messages = [
@@ -293,7 +293,7 @@ export async function estimateMealCloud(file, { hint = '', onStep = () => {}, si
       if (e.name === 'AbortError') throw e;
       lastErr = e;
       // Only fall through to another model when this one is unavailable or broken.
-      if (!(e instanceof CloudError) || ![404, 400, 422, 500, 502, 503].includes(e.status)) throw e;
+      if (!(e instanceof CloudError) || !(RETRYABLE.has(e.status) || e.status === 400 || e.status === 422)) throw e;
     }
   }
   if (!model) throw lastErr || new CloudError('No vision model answered.');

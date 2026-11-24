@@ -33,7 +33,7 @@ export const DEFAULT_SETTINGS = {
     endpoint: '', // CORS proxy in front of NVIDIA's API (browsers can't call it directly)
     apiKey: '', // optional when the proxy holds the key
     visionModel: 'nvidia/nemotron-3.5-super-vl-120b-a12b',
-    agentModel: 'moonshotai/kimi-k3.1-pro',
+    agentModel: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', // fastest that reliably answers on the free tier
     effort: 'balanced', // fast | balanced | deep
     accuracy: 'standard', // standard | high (two independent vision passes)
     approval: 'destructive', // destructive | all | none

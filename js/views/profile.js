@@ -14,7 +14,7 @@ import { GRADES, TIERS, planLabel, tierDot } from '../grade.js';
 import { MODELS, modelInfo, isConfigured, testConnection, listModels, resetQuirks } from '../cloud.js';
 import { openAISetupGuide } from '../sheets/aisetup.js';
 
-export const APP_VERSION = '1.2.0';
+export const APP_VERSION = '1.2.1';
 
 function modelOptions(current, visionOnly) {
   const list = MODELS.filter(m => !visionOnly || m.vision);
@@ -203,6 +203,7 @@ export async function render(el, params = []) {
     if (act === 'ai-guide') openAISetupGuide();
     if (act === 'ai-forget') { await saveSettings({ ai: { corrections: [] } }); toast('Corrections cleared', { icon: 'check' }); }
     if (act === 'ai-models') openModelBrowser();
+    if (act === 'ai-use') { await saveSettings({ ai: { agentModel: e.target.closest('[data-model]').dataset.model } }); toast('Coach model updated', { icon: 'check' }); }
     if (act === 'ai-test') {
       const btn = e.target.closest('button');
       const msg = el.querySelector('.ai-test-msg');
@@ -212,7 +213,8 @@ export async function render(el, params = []) {
       try {
         const r = await testConnection();
         msg.className = 'small ai-test-msg ok-text';
-        msg.innerHTML = `${icon('check', 14)} Connected in ${(r.ms / 1000).toFixed(1)} s · ${r.models} models available${r.missing.length ? ` · <span class="warn-text">not in catalog: ${esc(r.missing.join(', '))}</span>` : ''}`;
+        msg.innerHTML = `${icon('check', 14)} Connected in ${(r.ms / 1000).toFixed(1)} s · ${r.models} models available${r.missing.length ? ` · <span class="warn-text">not in catalog: ${esc(r.missing.join(', '))}</span>` : ''}`
+          + (r.switched ? `<br><span class="warn-text">${esc(modelInfo(getSettings().ai.agentModel).label)} didn't answer, but ${esc(modelInfo(r.model).label)} did.</span> <button class="link" data-act="ai-use" data-model="${esc(r.model)}">Use it for Coach</button>` : '');
         haptic(20);
       } catch (err) {
         msg.className = 'small ai-test-msg warn-text';

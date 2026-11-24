@@ -6,7 +6,7 @@ import * as store from '../store.js';
 import { scale, sum, calcTargets, kgToLb, lbToKg, DIETS } from '../nutrition.js';
 import { builtinById, searchBuiltin } from '../fooddb.js';
 import { searchOFF, searchUSDA, lookupBarcode } from '../api.js';
-import { estimateMealCloud } from '../vision.js';
+import { estimateMealCloud, tokens } from '../vision.js';
 import { checkGoals } from '../celebrate.js';
 import { todayKey, addDays, isKey, mealForNow, mealName, MEALS, uid, round, fmt } from '../util.js';
 
@@ -41,6 +41,25 @@ const compactFood = f => ({
   servings: (f.servings || []).map(s => ({ label: s.label, grams: s.grams })),
   favorite: f.favorite || undefined,
 });
+
+const QUALIFIERS = new Set(['a', 'an', 'one', 'two', 'three', 'some', 'my', 'the', 'of', 'medium', 'large', 'small', 'big', 'fresh',
+  'whole', 'piece', 'pieces', 'slice', 'slices', 'cup', 'cups', 'serving', 'servings', 'portion', 'bowl', 'plate', 'g', 'gram', 'grams', 'ml']);
+const coreQuery = q => q.toLowerCase().replace(/\d+([.,]\d+)?/g, ' ').split(/[^a-z'-]+/).filter(w => w && !QUALIFIERS.has(w)).join(' ') || q.toLowerCase();
+
+// Prefer the plain food over processed variants ("Banana, raw" before "Banana chips") unless asked for.
+const PROCESSED = /\b(chips?|dried|dehydrated|powder|nectar|juice|canned|syrup|candied|frozen|baby food|flavou?red|imitation)\b/i;
+function rankPlain(list, q) {
+  const qt = tokens(q);
+  return list
+    .map((f, i) => {
+      const name = f.name.toLowerCase();
+      const cover = qt.length ? qt.filter(t => tokens(name).includes(t)).length / qt.length : 0;
+      const processed = PROCESSED.test(name) && !PROCESSED.test(q);
+      return { f, s: cover * 2 + (/\braw\b/.test(name) ? 0.6 : 0) - (processed ? 1.5 : 0) - name.length / 200 - i * 0.01 };
+    })
+    .sort((a, b) => b.s - a.s)
+    .map(x => x.f);
+}
 
 async function resolveFood(id, ctx) {
   if (!id) return null;
@@ -137,9 +156,11 @@ export const TOOLS = [
       required: ['query'],
     },
     async run({ query, online = true }, ctx) {
-      const q = String(query || '').trim();
-      if (!q) throw new Error('Empty query');
-      const terms = q.toLowerCase().split(/\s+/);
+      const raw = String(query || '').trim();
+      if (!raw) throw new Error('Empty query');
+      // "a medium banana" → "banana": sizes and counts belong in grams/servings, not the search.
+      const q = coreQuery(raw);
+      const terms = q.split(/\s+/);
       const saved = (await store.allFoods())
         .filter(f => terms.every(t => `${f.name} ${f.brand || ''}`.toLowerCase().includes(t)))
         .sort((a, b) => (b.source === 'custom') - (a.source === 'custom') || (b.uses || 0) - (a.uses || 0))
@@ -153,12 +174,19 @@ export const TOOLS = [
         const [o, u] = await Promise.allSettled([searchOFF(q, ctrl.signal), searchUSDA(q, ctrl.signal)]);
         clearTimeout(timer);
         if (o.status === 'fulfilled') off = o.value.slice(0, 6); else errors.push('Open Food Facts unavailable');
-        if (u.status === 'fulfilled') usda = u.value.slice(0, 5); else errors.push('USDA unavailable');
+        if (u.status === 'fulfilled') usda = rankPlain(u.value, q).slice(0, 5); else errors.push('USDA unavailable');
       }
       const all = [...saved, ...generic, ...off, ...usda];
       all.forEach(f => ctx.foods.set(f.id, f));
+      // Explicit pick for smaller models: the user's own food, else the plain generic, else plain USDA.
+      const best = saved.find(f => tokens(f.name).some(t => terms.includes(t))) || generic[0] || usda[0] || off[0];
       return {
-        result: { query: q, your_foods: saved.map(compactFood), generic: generic.map(compactFood), branded_open_food_facts: off.map(compactFood), usda: usda.map(compactFood), notes: errors.length ? errors : undefined },
+        result: {
+          query: raw, searched_for: q,
+          best_match: best ? compactFood(best) : null,
+          your_foods: saved.map(compactFood), generic: generic.map(compactFood), branded_open_food_facts: off.map(compactFood), usda: usda.map(compactFood),
+          notes: errors.length ? errors : undefined,
+        },
         card: { icon: 'search', title: `Searched “${q}”`, detail: plural(all.length, 'result') },
       };
     },

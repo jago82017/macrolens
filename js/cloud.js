@@ -6,14 +6,15 @@
 
 import { getSettings } from './store.js';
 
-// Known catalog models. Capabilities come from NVIDIA's model docs (Nov 2026); unknown ids still work
-// as "custom" models with no extra parameters.
+// Known catalog models. Capabilities come from NVIDIA's model docs plus live tests through the proxy
+// (24 Nov 2026); unknown ids still work as "custom" models with no extra parameters.
 export const MODELS = [
-  { id: 'moonshotai/kimi-k3.1-pro', label: 'Kimi K3.1 Pro', vendor: 'Moonshot', vision: true, tools: true, reasoning: 'effort', temperature: 1.0, top_p: 0.95, note: 'Most capable · vision + tools · 1M context' },
-  { id: 'nvidia/nemotron-3.5-super-vl-120b-a12b', label: 'Nemotron 3.5 Super VL', vendor: 'NVIDIA', vision: true, tools: true, reasoning: 'thinking', temperature: 0.6, top_p: 0.95, note: "NVIDIA's flagship vision-language model" },
-  { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', label: 'Nemotron 3 Nano Omni', vendor: 'NVIDIA', vision: true, tools: true, reasoning: 'thinking', temperature: 0.6, top_p: 0.95, note: 'Fast · vision + tools' },
-  { id: 'z-ai/glm-5.3-flash', label: 'GLM-5.3 Flash', vendor: 'Z.ai', vision: true, tools: true, reasoning: 'effort', temperature: 0.7, top_p: 0.95, note: 'Fast · vision + tools' },
-  { id: 'mistralai/mistral-large-4-1t-a52b', label: 'Mistral Large 4', vendor: 'Mistral', vision: true, tools: true, reasoning: 'effort3', temperature: 1.0, top_p: 0.95, note: 'Vision + tools' },
+  { id: 'nvidia/nemotron-3.5-super-vl-120b-a12b', label: 'Nemotron 3.5 Super VL', vendor: 'NVIDIA', vision: true, tools: true, reasoning: 'thinking', temperature: 0.6, top_p: 0.95, note: 'Best for photos · tools work · ~10 s per step' },
+  // Its hosted endpoint drops image requests, so photos go to the vision model via analyze_photo.
+  { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', label: 'Nemotron 3 Nano Omni', vendor: 'NVIDIA', vision: false, tools: true, reasoning: 'thinking', temperature: 0.6, top_p: 0.95, note: 'Fastest Coach (~1 s) · photos go to your photo model' },
+  { id: 'moonshotai/kimi-k3.1-pro', label: 'Kimi K3.1 Pro', vendor: 'Moonshot', vision: true, tools: true, reasoning: 'effort', temperature: 1.0, top_p: 0.95, note: 'Most capable, but often overloaded on the free tier' },
+  { id: 'z-ai/glm-5.3-flash', label: 'GLM-5.3 Flash', vendor: 'Z.ai', vision: true, tools: true, reasoning: 'effort', temperature: 0.7, top_p: 0.95, note: 'Vision + tools · can be slow on the free tier' },
+  { id: 'mistralai/mistral-large-4-1t-a52b', label: 'Mistral Large 4', vendor: 'Mistral', vision: true, tools: true, reasoning: 'effort3', temperature: 1.0, top_p: 0.95, note: 'Vision + tools · can be slow on the free tier' },
   { id: 'google/gemma-4-31b-it', label: 'Gemma 4 31B', vendor: 'Google', vision: true, tools: false, reasoning: 'gemma', temperature: 1.0, top_p: 0.95, note: 'Vision · tools via text protocol' },
   { id: 'nvidia/nemotron-3-ultra-550b-a55b', label: 'Nemotron 3 Ultra', vendor: 'NVIDIA', vision: false, tools: true, reasoning: 'thinking', temperature: 1.0, top_p: 0.95, note: 'Largest · text only (photos go to the vision model)' },
 ];
@@ -40,6 +41,8 @@ export class CloudError extends Error {
 export class ToolsUnsupported extends Error {}
 
 function friendly(status, text, model) {
+  const label = modelInfo(model || '').label;
+  if (status === 408 || status === 504 || status === 524) return `${label} didn't respond in time (NVIDIA's free tier is busy). Try Nemotron 3 Nano Omni or Nemotron 3.5 Super VL.`;
   if (status === 401) return 'NVIDIA rejected the API key. Check the key in Profile → AI (or the NVIDIA_API_KEY secret in your proxy).';
   if (status === 403) return /origin/i.test(text) ? 'Your proxy blocked this site. Add it to ALLOWED_ORIGINS in the proxy settings.' : 'Access denied by NVIDIA for this model.';
   if (status === 404) return `Model "${model}" isn't available on NVIDIA right now. Pick another model in Profile → AI.`;
@@ -59,6 +62,23 @@ function setQuirk(model, patch) {
 }
 export const usesNativeTools = model => modelInfo(model).tools !== false && !quirks[model]?.noTools;
 export function resetQuirks() { quirks = {}; try { localStorage.removeItem(QUIRK_KEY); } catch { /* ignore */ } }
+
+// Free-tier models are sometimes queued for minutes. A model that times out or errors is skipped
+// for a while so the app can fall back to one that answers.
+const BUSY_MS = 20 * 60 * 1000;
+export const RETRYABLE = new Set([404, 408, 500, 502, 503, 504, 524]);
+export const isBusy = model => (quirks[model]?.busyUntil || 0) > Date.now();
+function markBusy(model) { setQuirk(model, { busyUntil: Date.now() + BUSY_MS }); }
+// Tested working for Coach (tool calls) on 24 Nov 2026, fastest first.
+export const AGENT_FALLBACKS = ['nvidia/nemotron-3-nano-omni-30b-a3b-reasoning', 'nvidia/nemotron-3.5-super-vl-120b-a12b'];
+
+// Preferred model first, then fallbacks; models marked busy go to the back of the queue.
+export function modelChain(preferred, fallbacks = []) {
+  const all = [preferred, ...fallbacks].filter((m, i, a) => m && a.indexOf(m) === i);
+  return [...all.filter(m => !isBusy(m)), ...all.filter(m => isBusy(m))];
+}
+const FIRST_BYTE_MS = 45000; // streaming: headers arrive as soon as generation starts
+const NON_STREAM_MS = 95000; // Cloudflare cuts proxied requests off at ~100 s anyway
 
 function reasoningParams(m, effort) {
   const e = effort || getSettings().ai?.effort || 'balanced';
@@ -155,19 +175,30 @@ export async function chat({ model, messages, tools, stream = true, signal, onDe
   if (!q.noExtras) Object.assign(body, reasoningParams(m, effort));
 
   let res;
+  const ctrl = new AbortController();
+  const forward = () => ctrl.abort();
+  signal?.addEventListener('abort', forward);
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; ctrl.abort(); }, body.stream ? FIRST_BYTE_MS : NON_STREAM_MS);
   try {
     res = await fetch(`${base}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: body.stream ? 'text/event-stream' : 'application/json', ...(key ? { Authorization: `Bearer ${key}` } : {}) },
       body: JSON.stringify(body),
-      signal,
+      signal: ctrl.signal,
     });
   } catch (e) {
+    signal?.removeEventListener('abort', forward);
+    if (timedOut) { markBusy(model); throw new CloudError(friendly(408, '', model), 408); }
     if (e.name === 'AbortError') throw e;
     throw new CloudError(navigator.onLine ? "Can't reach your AI proxy. Check the URL in Profile → AI." : "You're offline.");
+  } finally {
+    clearTimeout(timer);
   }
 
   if (!res.ok) {
+    signal?.removeEventListener('abort', forward);
+    if ([502, 503, 504, 524].includes(res.status)) markBusy(model);
     const text = await res.text().catch(() => '');
     if (res.status === 400 || res.status === 422) {
       const retry = patch => { setQuirk(model, patch); return chat({ model, messages, tools, stream, signal, onDelta, maxTokens, effort, temperature }); };
@@ -223,8 +254,17 @@ export async function testConnection() {
   const ids = await listModels();
   const ai = getSettings().ai;
   const missing = [ai.agentModel, ai.visionModel].filter(id => !ids.includes(id));
-  const r = await chat({ model: ai.agentModel, messages: [{ role: 'user', content: 'Reply with the single word: ready' }], stream: false, maxTokens: 400, effort: 'fast' });
-  return { ok: true, ms: Math.round(performance.now() - t0), models: ids.length, missing, reply: r.content.slice(0, 40) };
+  let lastErr;
+  for (const model of modelChain(ai.agentModel, AGENT_FALLBACKS)) {
+    try {
+      const r = await chat({ model, messages: [{ role: 'user', content: 'Reply with the single word: ready' }], maxTokens: 400, effort: 'fast' });
+      return { ok: true, ms: Math.round(performance.now() - t0), models: ids.length, missing, reply: r.content.slice(0, 40), model, switched: model !== ai.agentModel };
+    } catch (e) {
+      lastErr = e;
+      if (!(e instanceof CloudError) || !RETRYABLE.has(e.status)) throw e;
+    }
+  }
+  throw lastErr;
 }
 
 // Downscale a photo for upload: long side ≤ max px, JPEG. Returns { dataUrl, thumb, blob }.
