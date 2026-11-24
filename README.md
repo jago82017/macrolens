@@ -12,11 +12,54 @@ An installable, offline-first calorie and macro tracker built to be hosted on **
 - **Lookup chain**: local cache → **Open Food Facts** → **USDA FoodData Central** (branded UPC match). If nothing is found, a custom food is created with the barcode attached, so it scans instantly next time.
 - **Search** covers your foods, ~175 built-in generic foods, Open Food Facts (branded) and USDA (Foundation / SR Legacy / FNDDS).
 - **Custom foods**: per-serving or per-100 g entry, a calorie-vs-macro sanity check, and an emoji picker.
-- **Snap AI**: a small on-device AI estimates macros from a photo (see below).
+- **Snap AI**: estimates macros from a meal photo. It uses a large **NVIDIA-hosted vision model** (Nemotron 3.5 Super VL, Kimi K3.1 Pro and others) when connected, and a small **on-device model** offline (see below).
+- **Coach (AI agent)**: a chat tab where a large NVIDIA-hosted model can work directly on your data. It logs food from a message or photo, searches your library and the online databases, edits or deletes entries, copies meals, creates and edits custom foods, sets targets, updates your profile, and logs weight and water. Risky actions ask first, and every change can be undone.
 - **A–F food grades**: every food gets a diet-fit grade personalised to your goal and diet style. It covers protein, calorie density, fibre, sugar, saturated fat, salt, processing (NOVA) and additives (see below).
 - **Celebrations**: confetti and a badge when you hit protein, calories (±5%), fiber or water, or get a "perfect macro day". Each fires once per goal per day, with haptics.
 - **Storage**: persistent IndexedDB (it calls `navigator.storage.persist()`), plus JSON export/import and full reset.
 - **PWA details**: a precached app shell, cache-first CDN/WASM assets, an update prompt, Android back-button support for sheets, manifest shortcuts (Scan / Snap / Diary), maskable icons, and dark/light themes.
+
+## Cloud AI (NVIDIA) and Coach
+
+Macrolens uses NVIDIA's free hosted models through their OpenAI-compatible API (`integrate.api.nvidia.com`). Pick models in *Profile → AI*. You can choose any vision model for photos and any chat model for Coach, and *Browse available models* shows the live catalog.
+
+| Default | Model | Why |
+|---|---|---|
+| Photos | `nvidia/nemotron-3.5-super-vl-120b-a12b` | NVIDIA's flagship vision-language model |
+| Coach | `moonshotai/kimi-k3.1-pro` | Vision plus tool calling, 1M context |
+| Also listed | Nemotron 3 Nano Omni, GLM-5.3 Flash, Mistral Large 4, Gemma 4 31B, Nemotron 3 Ultra (text only) | |
+
+**Cloud photo pipeline** (`js/vision.js`). The big model sees the plate; the numbers stay grounded:
+
+1. **Library-aware prompt**: the model gets scale references (plate, cutlery, palm), density rules, your saved foods and your past corrections. It must return strict JSON per item: grams with a low/high range, count, cooking method, confidence and its own macro estimate.
+2. **High accuracy** (optional): two independent passes, merged. Disagreement lowers confidence.
+3. **Nutrition injection**: each item is matched to your library, the built-in database, then USDA (online). Per-100 g values come from there. The model's own numbers are only used when nothing matches, and those items are labelled *AI estimate*.
+4. **Cross-checks**: the cooking method adds fat/carb deltas to plain base foods. The model's calorie estimate nudges mixed dishes richer or lighter, bounded to ±25%. Big disagreements are flagged for you to check.
+5. **Learning**: when you change an item's food or weight, the correction is fed into future prompts.
+
+If the chosen vision model is unavailable, the next vision model is tried automatically. Snap's engine switch is *Auto* (cloud when connected and online), *Cloud* or *On-device*.
+
+**Coach harness** (`js/agent/`):
+- **Loop**: the observe → act loop allows up to 12 tool rounds per message and streams replies. Reasoning is shown in a collapsible panel.
+- **Tool calling**: native OpenAI-style tool calls where the model supports them. Otherwise it automatically falls back to a text protocol (`<tool_call>{…}</tool_call>`), so any chat model can drive the tools.
+- **Tools**: `get_overview`, `get_diary`, `get_history`, `search_foods`, `get_food`, `lookup_barcode`, `list_my_foods`, `analyze_photo`, `log_food`, `quick_add`, `update_entry`, `delete_entry`, `copy_meal`, `create_food`, `update_food`, `delete_food`, `set_targets`, `update_profile`, `log_weight`, `log_water`.
+- **Approvals**: *Profile → AI → Coach asks before*. The default asks before deletes and target/profile changes. Every change gets an **Undo** button.
+- **Photos**: photos attached in chat go straight to vision-capable Coach models. `analyze_photo` runs the grounded pipeline above and returns loggable items.
+- **Resilience**: a model that rejects an optional parameter (reasoning effort, thinking switch, tools, streaming) is retried without it, and the app remembers that for next time.
+
+### Connect NVIDIA (about 3 minutes, free)
+
+NVIDIA's API sends no CORS headers, so a browser app can't call it directly. A tiny Cloudflare Worker, `proxy/nvidia-proxy.js`, passes requests through and can hold your key. The same steps are in the app under *Profile → AI → Setup guide*, with a copy button for the code.
+
+1. Get a key: sign in at <https://build.nvidia.com>, open any model, then **Get API Key** → **Generate**. The key starts with `nvapi-`.
+2. Create the Worker: at <https://dash.cloudflare.com>, go to **Workers & Pages → Create → Create Worker** and deploy it. Then **Edit code**, paste `proxy/nvidia-proxy.js`, and **Deploy**.
+3. Add the Worker variables under **Settings → Variables and Secrets**:
+   - `NVIDIA_API_KEY`: type *Secret*, your key.
+   - `ALLOWED_ORIGINS`: type *Text*, your site origin, e.g. `https://yourname.github.io`. Add `http://localhost:8080` for local testing.
+   - Then deploy again.
+4. In the app, open *Profile → AI*, paste the Worker URL as **Proxy URL**, leave the key empty, and tap **Test connection**.
+
+Privacy: with cloud AI on, photos and Coach messages (including diary details Coach looks up) go to NVIDIA through your Worker. The key is never written into backups. Set Snap AI to *On-device* to keep photos on the phone.
 
 ## How the on-device AI works
 
@@ -110,11 +153,16 @@ js/grade.js             A–F diet-fit grading engine
 js/grade-data.js        Additive ratings, ingredient aliases, typical values for generic foods
 js/api.js               Open Food Facts + USDA clients and barcode lookup chain
 js/scanner.js           Camera barcode scanner
-js/ai.js                AI estimation pipeline (scoring, injection, memory)
-js/ai-worker.js         Model runtime (Transformers.js in a Worker)
+js/ai.js                On-device AI estimation pipeline (scoring, injection, memory)
+js/ai-worker.js         On-device model runtime (Transformers.js in a Worker)
+js/cloud.js             NVIDIA client: streaming, tool calls, per-model params and fallbacks
+js/vision.js            Cloud photo estimator with nutrition grounding
+js/agent/agent.js       Coach harness: tool loop, approvals, undo, persistence
+js/agent/tools.js       Coach tools over the diary, library, targets, weight and water
+proxy/nvidia-proxy.js   Cloudflare Worker CORS proxy for NVIDIA's API
 js/celebrate.js         Confetti + goal celebrations
-js/views/*              Dashboard, Diary, Week, Profile
-js/sheets/*             Add-food sheet, food detail/forms, calculator, onboarding
+js/views/*              Dashboard, Diary, Coach, Week, Profile
+js/sheets/*             Add-food sheet, cloud Snap, food detail/forms, calculator, AI setup guide, onboarding
 models/                 Precomputed MobileCLIP text embeddings
 tools/                  Embedding bundle builder
 ```

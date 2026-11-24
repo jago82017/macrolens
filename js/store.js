@@ -28,6 +28,17 @@ export const DEFAULT_SETTINGS = {
   haptics: true,
   grades: true, // show A–F diet-fit badges in food lists and the diary
   onboarded: false,
+  ai: {
+    engine: 'auto', // Snap AI: 'auto' (cloud when set up and online), 'cloud' or 'local'
+    endpoint: '', // CORS proxy in front of NVIDIA's API (browsers can't call it directly)
+    apiKey: '', // optional when the proxy holds the key
+    visionModel: 'nvidia/nemotron-3.5-super-vl-120b-a12b',
+    agentModel: 'moonshotai/kimi-k3.1-pro',
+    effort: 'balanced', // fast | balanced | deep
+    accuracy: 'standard', // standard | high (two independent vision passes)
+    approval: 'destructive', // destructive | all | none
+    corrections: [], // what the user changed after cloud photo estimates, fed back into prompts
+  },
 };
 
 let settings = structuredClone(DEFAULT_SETTINGS);
@@ -91,6 +102,8 @@ export async function getEntries(date) {
   const list = await db.byIndex('entries', 'date', date);
   return list.sort((a, b) => a.createdAt - b.createdAt);
 }
+
+export const getEntry = id => db.get('entries', id);
 
 export function getEntriesRange(from, to) {
   return db.byIndex('entries', 'date', IDBKeyRange.bound(from, to));
@@ -207,7 +220,8 @@ export async function getStreak() {
 const BACKUP_STORES = ['entries', 'foods', 'days', 'weights', 'aiMemory'];
 
 export async function exportAll() {
-  const out = { app: 'macrolens', version: 1, exportedAt: new Date().toISOString(), settings };
+  // Never write the API key into a backup file.
+  const out = { app: 'macrolens', version: 1, exportedAt: new Date().toISOString(), settings: { ...settings, ai: { ...settings.ai, apiKey: '' } } };
   for (const s of BACKUP_STORES) {
     const rows = await db.all(s);
     out[s] = s === 'aiMemory' ? rows.map(r => ({ ...r, emb: Array.from(r.emb) })) : rows;
@@ -222,12 +236,16 @@ export async function importAll(data) {
     const rows = s === 'aiMemory' ? data[s].map(r => ({ ...r, emb: Float32Array.from(r.emb) })) : data[s];
     await db.bulkPut(s, rows);
   }
-  if (data.settings) await saveSettings({ ...data.settings, onboarded: true });
+  if (data.settings) {
+    const ai = { ...data.settings.ai };
+    if (!ai.apiKey) ai.apiKey = settings.ai.apiKey; // backups never carry the key; keep this device's
+    await saveSettings({ ...data.settings, ai, onboarded: true });
+  }
   emit('entries', { action: 'import' });
   emit('foods', {});
 }
 
 export async function resetAll() {
-  for (const s of ['entries', 'foods', 'days', 'weights', 'aiMemory', 'settings']) await db.clear(s);
+  for (const s of ['entries', 'foods', 'days', 'weights', 'aiMemory', 'settings', 'chats']) await db.clear(s);
   settings = structuredClone(DEFAULT_SETTINGS);
 }

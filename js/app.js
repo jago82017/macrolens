@@ -12,8 +12,9 @@ import * as dashboard from './views/dashboard.js';
 import * as diary from './views/diary.js';
 import * as week from './views/week.js';
 import * as profile from './views/profile.js';
+import * as coach from './views/coach.js';
 
-const ROUTES = { dashboard, diary, week, profile };
+const ROUTES = { dashboard, diary, week, profile, coach };
 const view = document.getElementById('view');
 let current = { name: null, params: [] };
 let renderSeq = 0;
@@ -64,7 +65,8 @@ async function render(enter = false) {
   view.replaceChildren(el);
 }
 
-const rerender = debounce(() => render(false), 40);
+// Data changes refresh the current view, except live views (Coach) that manage their own DOM.
+const rerender = debounce(() => { if (!ROUTES[current.name]?.keepAlive) render(false); }, 40);
 
 // ---------- Theme ----------
 const darkMQ = matchMedia('(prefers-color-scheme: dark)');
@@ -85,8 +87,8 @@ function buildTabbar() {
     <a href="#/dashboard" data-route="dashboard">${icon('home', 22)}<span>Home</span></a>
     <a href="#/diary" data-route="diary">${icon('book', 22)}<span>Diary</span></a>
     <button class="fab" aria-label="Add food">${icon('plus', 28)}</button>
-    <a href="#/week" data-route="week">${icon('chart', 22)}<span>Week</span></a>
-    <a href="#/profile" data-route="profile">${icon('user', 22)}<span>Profile</span></a>`;
+    <a href="#/coach" data-route="coach">${icon('sparkles', 22)}<span>Coach</span></a>
+    <a href="#/week" data-route="week">${icon('chart', 22)}<span>Week</span></a>`;
   nav.querySelector('.fab').addEventListener('click', () => {
     const date = current.name === 'diary' && isKey(current.params[0]) ? current.params[0] : todayKey();
     openAddFood({ date });

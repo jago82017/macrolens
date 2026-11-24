@@ -36,6 +36,13 @@
       "icons": [{ "src": "icons/shortcut-snap.png", "sizes": "96x96", "type": "image/png" }]
     },
     {
+      "name": "Ask Coach (AI)",
+      "short_name": "Coach",
+      "description": "Chat with the AI coach that can log food for you",
+      "url": "./#/coach",
+      "icons": [{ "src": "icons/shortcut-snap.png", "sizes": "96x96", "type": "image/png" }]
+    },
+    {
       "name": "Food diary",
       "short_name": "Diary",
       "url": "./#/diary",

@@ -22,7 +22,7 @@ export function openOnboarding() {
         </div>
         <ul class="ob-features">
           <li><span class="f-ico scan">${icon('scan', 20)}</span><div><b>Scan any barcode</b><small>Open Food Facts + USDA, with custom foods for anything missing</small></div></li>
-          <li><span class="f-ico snap">${icon('sparkles', 20)}</span><div><b>Snap a meal</b><small>On-device AI estimates macros from a photo, privately</small></div></li>
+          <li><span class="f-ico snap">${icon('sparkles', 20)}</span><div><b>Snap a meal, ask Coach</b><small>NVIDIA AI estimates photos and logs food for you, or keep photos on-device</small></div></li>
           <li><span class="f-ico week">${icon('chart', 20)}</span><div><b>See your week</b><small>Trends, adherence, insights and celebrations</small></div></li>
           <li><span class="f-ico safe">${icon('shield', 20)}</span><div><b>Yours, offline</b><small>Everything is stored on this device</small></div></li>
         </ul>

@@ -3,7 +3,10 @@
 import { openSheet, toast, skeletonRows } from '../ui.js';
 import { icon } from '../icons.js';
 import { esc, fmt, round, MEALS, mealName, mealForNow, todayKey, relDay, debounce, haptic } from '../util.js';
-import { allFoods, recentFoods, addEntry, addEntries, touchFood } from '../store.js';
+import { allFoods, recentFoods, addEntry, addEntries, touchFood, getSettings, saveSettings } from '../store.js';
+import { runCloudSnap, snapEngine } from './snap-cloud.js';
+import { isConfigured, modelInfo } from '../cloud.js';
+import { openAISetupGuide } from './aisetup.js';
 import { BUILTIN_FOODS, searchBuiltin } from '../fooddb.js';
 import { searchOFF, searchUSDA, lookupBarcode } from '../api.js';
 import { startScanner, warmScanner } from '../scanner.js';
@@ -335,14 +338,29 @@ function snapPane(pane, ctx) {
 
   async function intro() {
     revoke();
+    pane.onclick = pane.oninput = null; // drop the cloud results handlers, if any
+    const engine = snapEngine();
     const cached = await isModelCached('vision');
     if (!alive) return;
+    const ai = getSettings().ai;
+    const cloudReady = isConfigured();
+    const status = engine === 'cloud'
+      ? cloudReady
+        ? `<div class="model-status ok">${icon('cloud', 16)}<span>${esc(modelInfo(ai.visionModel).label)} via NVIDIA · ${ai.accuracy === 'high' ? '2 passes' : '1 pass'} · grounded in your foods + USDA</span></div>`
+        : `<div class="model-status warn">${icon('info', 16)}<span>Cloud AI isn't connected yet.</span><button class="link" data-setup>Set up</button></div>`
+      : `<div class="model-status ${cached ? 'ok' : ''}">${icon(cached ? 'shield' : 'cpu', 16)}<span>MobileCLIP-S0 · ${cached ? 'downloaded — works offline' : `${MODEL_SIZE_MB.vision} MB one-time download on first use`}</span></div>`;
     pane.innerHTML = `
       <div class="snap-intro">
+        <div class="seg sm engine-seg" data-engine role="radiogroup" aria-label="AI engine">
+          <button data-v="cloud" class="${engine === 'cloud' ? 'active' : ''}">${icon('cloud', 14)} NVIDIA cloud</button>
+          <button data-v="local" class="${engine === 'local' ? 'active' : ''}">${icon('cpu', 14)} On-device</button>
+        </div>
         <div class="snap-hero">
           <div class="snap-orb">${icon('sparkles', 34)}</div>
           <h3>Snap your meal</h3>
-          <p class="muted">A small AI model runs entirely on your phone. It recognises the food, then real nutrition data is injected for the macros. Your photos never leave the device.</p>
+          <p class="muted">${engine === 'cloud'
+            ? `A large vision model (${esc(modelInfo(ai.visionModel).label)}) identifies every item and estimates its weight. Nutrition comes from your foods, the database and USDA, not from guesses.`
+            : 'A small AI model runs entirely on your phone. It recognises the food, then real nutrition data is injected for the macros. Your photos never leave the device.'}</p>
         </div>
         <label class="btn primary block lg">${icon('camera')} Take photo<input type="file" accept="image/*" capture="environment" hidden data-file></label>
         <label class="btn ghost block">${icon('image')} Choose from gallery<input type="file" accept="image/*" hidden data-file></label>
@@ -350,7 +368,7 @@ function snapPane(pane, ctx) {
           <label class="label">Hint <span class="muted">(optional — boosts accuracy)</span></label>
           <input class="input" data-hint placeholder="e.g. chicken curry, about 350 g" autocomplete="off">
         </div>
-        <div class="model-status ${cached ? 'ok' : ''}">${icon(cached ? 'shield' : 'cpu', 16)}<span>MobileCLIP-S0 · ${cached ? 'downloaded — works offline' : `${MODEL_SIZE_MB.vision} MB one-time download on first use`}</span></div>
+        ${status}
         <ul class="tips">
           <li>${icon('bulb', 14)} Shoot from above in good light, one plate per photo.</li>
           <li>${icon('bulb', 14)} Mixed plates? Tap extra detected items to add them.</li>
@@ -361,11 +379,31 @@ function snapPane(pane, ctx) {
       const f = inp.files?.[0];
       if (f) run(f, pane.querySelector('[data-hint]').value);
     }));
+    pane.querySelector('[data-engine]').addEventListener('click', async e => {
+      const b = e.target.closest('[data-v]');
+      if (!b || b.classList.contains('active')) return;
+      await saveSettings({ ai: { engine: b.dataset.v } });
+      haptic(8);
+      intro();
+    });
+    pane.querySelector('[data-setup]')?.addEventListener('click', () => openAISetupGuide());
   }
 
-  async function run(file, hint) {
+  async function run(file, hint, { forceLocal = false } = {}) {
     revoke();
     photoUrl = URL.createObjectURL(file);
+    if (!forceLocal && snapEngine() === 'cloud' && isConfigured()) {
+      analysis = null;
+      items = [];
+      return runCloudSnap(pane, ctx, {
+        file, hint, photoUrl,
+        alive: () => alive,
+        onRetake: intro,
+        onLocal: (f, h) => run(f, h, { forceLocal: true }),
+        openPicker: openFoodPicker,
+      });
+    }
+    pane.onclick = pane.oninput = null;
     pane.innerHTML = `
       <div class="snap-analyzing">
         <div class="snap-photo"><img src="${photoUrl}" alt=""><div class="scanline"></div><div class="snap-grid"></div></div>

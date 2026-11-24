@@ -185,9 +185,11 @@ async function lookupUSDA(code, signal) {
 }
 
 // Generic (non-branded) foods: Foundation, SR Legacy and FNDDS survey dishes. Branded items come from OFF.
+// USDA's API now rejects "Survey (FNDDS)" as a dataType filter (400) while still returning those foods
+// unfiltered, so search without a filter and drop branded items here.
 export async function searchUSDA(q, signal) {
-  const foods = await usdaFetch(`query=${encodeURIComponent(q)}&pageSize=25&dataType=${encodeURIComponent('Foundation,SR Legacy,Survey (FNDDS)')}`, signal);
-  return foods.map(fromUSDA).filter(Boolean);
+  const foods = await usdaFetch(`query=${encodeURIComponent(q)}&pageSize=50`, signal);
+  return foods.filter(f => f.dataType !== 'Branded').slice(0, 25).map(fromUSDA).filter(Boolean);
 }
 
 // Re-fetch a saved Open Food Facts product to pick up fields added after it was first saved

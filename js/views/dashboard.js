@@ -31,6 +31,11 @@ export async function render(el) {
   const perDay = days.map(d => sum(week.filter(e => e.date === d)).kcal);
   const maxDay = Math.max(tg.kcal * 1.25, ...perDay);
   const water = day.water || 0;
+  const proteinLeft = Math.round(tg.protein - t.protein);
+  const coachPrompt = !entries.length ? 'Plan a day of meals that fits my targets'
+    : proteinLeft > 25 ? `What can I eat to get ${proteinLeft} g more protein today?`
+      : remaining < 0 ? 'I went over today. How should I adjust tomorrow?'
+        : 'How am I doing this week?';
   const glasses = Math.max(6, Math.round(tg.water / 250));
   const filled = Math.min(glasses, Math.floor(water / 250));
 
@@ -40,7 +45,10 @@ export async function render(el) {
         <p class="eyebrow">${esc(fmtDate(date))}</p>
         <h1>${greeting()}${s.name ? `, ${esc(s.name)}` : ''}</h1>
       </div>
-      <a class="streak-chip ${streak ? 'on' : ''}" href="#/week" aria-label="${streak} day streak">${icon('flame', 16)}<b>${streak}</b></a>
+      <div class="row gap-sm">
+        <a class="streak-chip ${streak ? 'on' : ''}" href="#/week" aria-label="${streak} day streak">${icon('flame', 16)}<b>${streak}</b></a>
+        <a class="avatar-btn" href="#/profile" aria-label="Profile and settings">${s.name ? esc(s.name.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join('').toUpperCase()) : icon('user', 18)}</a>
+      </div>
     </header>
 
     ${installState.canInstall ? `
@@ -85,6 +93,12 @@ export async function render(el) {
       <button data-quick="search"><span class="qa-ico search">${icon('search', 22)}</span>Search</button>
       <button data-quick="quick"><span class="qa-ico quick">${icon('zap', 22)}</span>Quick add</button>
     </section>
+
+    <a class="card coach-card" href="#/coach/ask/${encodeURIComponent(coachPrompt)}">
+      <span class="coach-orb">${icon('sparkles', 20)}</span>
+      <span class="grow"><b>Ask Coach</b><small>“${esc(coachPrompt)}”</small></span>
+      ${icon('chevR', 18)}
+    </a>
 
     <section class="card water-card">
       <div class="card-head">

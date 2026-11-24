@@ -11,10 +11,62 @@ import { openFoodEditor, foodRow } from '../sheets/food.js';
 import { prepareAI, isModelCached, memoryCount, clearMemory, aiState, MODEL_SIZE_MB } from '../ai.js';
 import { installState, promptInstall } from '../install.js';
 import { GRADES, TIERS, planLabel, tierDot } from '../grade.js';
+import { MODELS, modelInfo, isConfigured, testConnection, listModels, resetQuirks } from '../cloud.js';
+import { openAISetupGuide } from '../sheets/aisetup.js';
 
-export const APP_VERSION = '1.1.0';
+export const APP_VERSION = '1.2.0';
 
-export async function render(el) {
+function modelOptions(current, visionOnly) {
+  const list = MODELS.filter(m => !visionOnly || m.vision);
+  const opts = list.map(m => `<option value="${esc(m.id)}" ${m.id === current ? 'selected' : ''}>${esc(m.label)} · ${esc(m.vendor)}</option>`);
+  if (current && !list.some(m => m.id === current)) opts.push(`<option value="${esc(current)}" selected>${esc(current)} (custom)</option>`);
+  return opts.join('');
+}
+
+function segRow(key, label, sub, options, value) {
+  return `<div class="set-row stack-sm"><span>${label}${sub ? `<small class="muted">${sub}</small>` : ''}</span>
+    <div class="seg sm" data-aiseg="${key}">${options.map(([v, l]) => `<button data-v="${v}" class="${value === v ? 'active' : ''}">${l}</button>`).join('')}</div></div>`;
+}
+
+function aiCard(s) {
+  const ai = s.ai;
+  const ok = isConfigured();
+  return `
+    <section class="card ai-card" id="ai-settings">
+      <div class="card-head"><h3>${icon('cloud', 18)} Cloud AI · NVIDIA</h3><span class="badge ${ok ? 'badge-ok' : ''}">${ok ? 'Proxy set' : 'Not set up'}</span></div>
+      <p class="muted small">Powers <b>Coach</b> and the most accurate <b>Snap AI</b> estimates using NVIDIA's free hosted models (Kimi, Nemotron and more). Browsers need a small free proxy to reach NVIDIA.</p>
+      <button class="btn soft block" data-act="ai-guide">${icon('bulb', 18)} Setup guide (3 minutes)</button>
+      <div class="field" style="margin-top:12px">
+        <label class="label">Proxy URL</label>
+        <input class="input" data-ai="endpoint" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://macrolens-ai.yourname.workers.dev" value="${esc(ai.endpoint)}">
+      </div>
+      <div class="field">
+        <label class="label">NVIDIA API key <span class="unit-hint">leave empty if your proxy stores it</span></label>
+        <input class="input" type="password" data-ai="apiKey" autocomplete="off" spellcheck="false" placeholder="nvapi-…" value="${esc(ai.apiKey)}">
+      </div>
+      <button class="btn primary block" data-act="ai-test" ${ok ? '' : 'disabled'}>${icon('zap', 18)} Test connection</button>
+      <p class="small ai-test-msg"></p>
+      <div class="field">
+        <label class="label">Photo model (vision)</label>
+        <select class="input" data-ai="visionModel">${modelOptions(ai.visionModel, true)}</select>
+      </div>
+      <div class="field">
+        <label class="label">Coach model</label>
+        <select class="input" data-ai="agentModel">${modelOptions(ai.agentModel, false)}</select>
+        <p class="muted small">${esc(modelInfo(ai.agentModel).note || 'Custom model')}</p>
+      </div>
+      ${segRow('effort', 'Reasoning', 'Deeper is more accurate but slower', [['fast', 'Fast'], ['balanced', 'Balanced'], ['deep', 'Deep']], ai.effort)}
+      ${segRow('accuracy', 'Photo accuracy', 'High runs two independent passes and merges them', [['standard', 'Standard'], ['high', 'High']], ai.accuracy)}
+      ${segRow('engine', 'Snap AI engine', 'Auto uses cloud when connected and online', [['auto', 'Auto'], ['cloud', 'Cloud'], ['local', 'On-device']], ai.engine)}
+      ${segRow('approval', 'Coach asks before', 'Every change can still be undone', [['destructive', 'Big changes'], ['all', 'Any change'], ['none', 'Never']], ai.approval)}
+      <div class="set-row"><span>Learned corrections<small class="muted">Your fixes to cloud photo estimates, fed back to the model</small></span><b>${(ai.corrections || []).length}</b></div>
+      ${(ai.corrections || []).length ? `<button class="btn ghost block danger-text" data-act="ai-forget">${icon('trash', 16)} Forget corrections</button>` : ''}
+      <button class="set-row as-btn" data-act="ai-models" ${ok ? '' : 'disabled'}><span>Browse available models<small class="muted">Live list from NVIDIA</small></span>${icon('chevR', 18)}</button>
+      <p class="muted small">With cloud AI on, photos and Coach messages (including diary details Coach looks up) are sent to NVIDIA through your proxy. The key is never included in backups.</p>
+    </section>`;
+}
+
+export async function render(el, params = []) {
   const s = getSettings();
   const tg = s.targets;
   const [info, cached, memCount, foods] = await Promise.all([storageInfo(), isModelCached(), memoryCount(), allFoods()]);
@@ -67,9 +119,11 @@ export async function render(el) {
       <button class="set-row as-btn" data-act="grades-help"><span>How grades work<small class="muted">Scoring, caps and additive ratings</small></span>${icon('chevR', 18)}</button>
     </section>
 
+    ${aiCard(s)}
+
     <section class="card">
       <div class="card-head"><h3>${icon('cpu', 18)} On-device AI</h3><span class="badge ${cached ? 'badge-ok' : ''}">${cached ? 'Ready offline' : 'Not downloaded'}</span></div>
-      <p class="muted small">MobileCLIP-S0 runs locally via WebAssembly. Photos are never uploaded. It identifies the food and the app injects verified nutrition data, then refines with portion, cooking-method and calorie-density passes.</p>
+      <p class="muted small">The offline fallback for Snap AI. MobileCLIP-S0 runs locally via WebAssembly and photos are never uploaded. It identifies the food and the app injects verified nutrition data, then refines with portion, cooking-method and calorie-density passes.</p>
       <div class="ai-dl" ${cached ? 'hidden' : ''}>
         <div class="pbar lg"><span class="ai-bar" style="width:0;background:linear-gradient(90deg,var(--brand),var(--brand-2))"></span></div>
         <p class="muted small ai-msg">${MODEL_SIZE_MB.vision + MODEL_SIZE_MB.text} MB one-time download (image + text towers). Use Wi-Fi if you can.</p>
@@ -119,6 +173,15 @@ export async function render(el) {
   });
 
   el.querySelector('[data-name]').addEventListener('change', e => saveSettings({ name: e.target.value.trim() }));
+  el.querySelectorAll('[data-ai]').forEach(inp => inp.addEventListener('change', async () => {
+    const key = inp.dataset.ai;
+    let v = inp.value.trim();
+    if (key === 'endpoint' && v && !/^https?:\/\//i.test(v)) v = `https://${v}`;
+    if (key === 'endpoint' || key === 'apiKey') resetQuirks();
+    await saveSettings({ ai: { [key]: v } });
+    toast(key === 'apiKey' ? 'API key saved on this device' : 'AI settings saved', { icon: 'check' });
+  }));
+  if (params[0] === 'ai') requestAnimationFrame(() => el.querySelector('#ai-settings')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   el.querySelector('[data-usda]').addEventListener('change', e => { saveSettings({ usdaKey: e.target.value.trim() }); toast('USDA key saved', { icon: 'check' }); });
   el.querySelectorAll('[data-toggle]').forEach(t => t.addEventListener('change', () => saveSettings({ [t.dataset.toggle]: t.checked })));
   el.querySelector('[data-import]').addEventListener('change', async e => {
@@ -133,8 +196,29 @@ export async function render(el) {
   el.onclick = async e => {
     const pref = e.target.closest('[data-pref] [data-v]');
     if (pref) { await saveSettings({ [pref.closest('[data-pref]').dataset.pref]: pref.dataset.v }); return; }
+    const aiSeg = e.target.closest('[data-aiseg] [data-v]');
+    if (aiSeg) { await saveSettings({ ai: { [aiSeg.closest('[data-aiseg]').dataset.aiseg]: aiSeg.dataset.v } }); haptic(8); return; }
     const act = e.target.closest('[data-act]')?.dataset.act;
     if (!act) return;
+    if (act === 'ai-guide') openAISetupGuide();
+    if (act === 'ai-forget') { await saveSettings({ ai: { corrections: [] } }); toast('Corrections cleared', { icon: 'check' }); }
+    if (act === 'ai-models') openModelBrowser();
+    if (act === 'ai-test') {
+      const btn = e.target.closest('button');
+      const msg = el.querySelector('.ai-test-msg');
+      btn.disabled = true;
+      msg.className = 'small ai-test-msg muted';
+      msg.textContent = 'Testing… (big models can take up to a minute on the first call)';
+      try {
+        const r = await testConnection();
+        msg.className = 'small ai-test-msg ok-text';
+        msg.innerHTML = `${icon('check', 14)} Connected in ${(r.ms / 1000).toFixed(1)} s · ${r.models} models available${r.missing.length ? ` · <span class="warn-text">not in catalog: ${esc(r.missing.join(', '))}</span>` : ''}`;
+        haptic(20);
+      } catch (err) {
+        msg.className = 'small ai-test-msg warn-text';
+        msg.textContent = err.message;
+      } finally { btn.disabled = false; }
+    }
     if (act === 'targets') openTargetsSheet();
     if (act === 'grades-help') openGradesHelp();
     if (act === 'foods') openFoodsManager();
@@ -180,6 +264,38 @@ export async function render(el) {
   };
 
   if (aiState.status === 'loading') el.querySelector('.ai-msg').textContent = 'Download in progress…';
+}
+
+async function openModelBrowser() {
+  const sheet = openSheet({ title: 'NVIDIA models', full: true, html: '<p class="muted small">Loading the live catalog…</p>' });
+  try {
+    const ids = await listModels();
+    const known = new Map(MODELS.map(m => [m.id, m]));
+    const draw = () => {
+      const cur = getSettings().ai;
+      sheet.body.innerHTML = `
+        <p class="muted small">${ids.length} models on your account. Known chat models are first; embedding, safety and code models won't work as Coach.</p>
+        <div class="model-list">${[...ids].sort((a, b) => known.has(b) - known.has(a)).map(id => {
+          const m = known.get(id);
+          return `<div class="model-opt ${id === cur.agentModel || id === cur.visionModel ? 'on' : ''}">
+            <span class="mo-main"><b>${esc(m?.label || id)}</b><small>${esc(m ? `${m.note}` : id)}</small></span>
+            <span class="row gap-sm">
+              <button class="btn sm ${id === cur.agentModel ? 'primary' : 'soft'}" data-coach="${esc(id)}">Coach</button>
+              <button class="btn sm ${id === cur.visionModel ? 'primary' : 'soft'}" data-vision="${esc(id)}">Photos</button>
+            </span>
+          </div>`;
+        }).join('')}</div>`;
+    };
+    draw();
+    sheet.body.addEventListener('click', async e => {
+      const c = e.target.closest('[data-coach]'), v = e.target.closest('[data-vision]');
+      if (c) await saveSettings({ ai: { agentModel: c.dataset.coach } });
+      if (v) await saveSettings({ ai: { visionModel: v.dataset.vision } });
+      if (c || v) { haptic(8); draw(); }
+    });
+  } catch (err) {
+    sheet.body.innerHTML = `<p class="warn-text">${esc(err.message)}</p>`;
+  }
 }
 
 function openTargetsSheet() {
